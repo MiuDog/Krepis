@@ -1,7 +1,4 @@
 {
-  // IntelliSense 設定。includePath 直接指向 include/，因此不依賴任何建置產物即可解析標頭。
-  // 若已用 ninja preset 建置過，compileCommands 會提供更精確的旗標（含 /utf-8），
-  // 檔案不存在時 VS Code 會忽略該欄位並回退到下方的 includePath。
   "version": 4,
   "configurations": [
     {

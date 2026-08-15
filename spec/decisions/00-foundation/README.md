@@ -14,15 +14,18 @@
 | 決策 | 狀態 | 主題 |
 |---|---|---|
 | [FND-0001](FND-0001-scope-language-boundary-and-rejections.md) | Accepted | 範圍、語言邊界判準與拒絕清單 |
-| [FND-0002](FND-0002-c-abi-error-memory-and-threading.md) | **Proposed** | C ABI 邊界、錯誤模型、arena 記憶體、同步／背景執行緒分工 |
+| [FND-0002](FND-0002-c-abi-error-memory-and-threading.md) | Accepted | C ABI 邊界、錯誤模型、arena 與釋放契約、執行緒模型（**分工線除外**） |
+
+FND-0002 原含的「同步／背景分工線」（D1）已分離至
+[`LAY-0001`](../02-layout/LAY-0001-sync-background-split-and-frame-budget.md)，
+狀態 `Proposed`，**刻意待 P0 實測後才核准**——其正確性只能量、不能推。
 
 ## 待決問題
 
-### 已由 FND-0002 涵蓋（待核准）
+### 已由 FND-0002 解決
 
-交付形式與 ABI、例外策略、記憶體策略、並行模型四項已合併於
-[FND-0002](FND-0002-c-abi-error-memory-and-threading.md)，狀態 `Proposed`。
-**該決策核准前不得撰寫公開標頭。**
+交付形式與 ABI、例外策略、記憶體策略、執行緒模型（不含分工線）已 `Accepted`。
+**公開標頭的形狀已可確定，撰寫不再被阻擋。**
 
 ### 可延後
 

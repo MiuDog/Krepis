@@ -74,4 +74,5 @@ decisions/<NN-能力>/<代碼>-NNNN-kebab-case-主題.md
 | 決策 | 狀態 | 主題 |
 |---|---|---|
 | [FND-0001](decisions/00-foundation/FND-0001-scope-language-boundary-and-rejections.md) | Accepted | Krepis 的範圍、語言邊界判準與拒絕清單 |
-| [FND-0002](decisions/00-foundation/FND-0002-c-abi-error-memory-and-threading.md) | **Proposed** | C ABI 邊界、錯誤模型、arena 記憶體、同步／背景執行緒分工 |
+| [FND-0002](decisions/00-foundation/FND-0002-c-abi-error-memory-and-threading.md) | Accepted | C ABI 邊界、錯誤模型、arena 與釋放契約、執行緒模型（分工線除外） |
+| [LAY-0001](decisions/02-layout/LAY-0001-sync-background-split-and-frame-budget.md) | **Proposed** | 同步／背景的分工線與一幀預算；刻意待 P0 實測後才核准 |
