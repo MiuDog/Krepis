@@ -14,6 +14,7 @@
 | 決策 | 狀態 | 主題 |
 |---|---|---|
 | [FND-0001](FND-0001-scope-language-boundary-and-rejections.md) | Accepted | 範圍、語言邊界判準與拒絕清單 |
+| [FND-0003](FND-0003-dependency-management.md) | **Proposed** | 第三方依賴以 CMake FetchContent 取得；淘汰 vcpkg |
 | [FND-0002](FND-0002-c-abi-error-memory-and-threading.md) | Accepted | C ABI 邊界、錯誤模型、arena 與釋放契約、執行緒模型（**分工線除外**） |
 
 FND-0002 原含的「同步／背景分工線」（D1）已分離至
@@ -29,8 +30,7 @@ FND-0002 原含的「同步／背景分工線」（D1）已分離至
 
 ### 可延後
 
-- **依賴管理方式**：vcpkg／CMake `FetchContent`／git submodule。引入任何第三方庫前必須先定。
-  目前本機未安裝 vcpkg。
+- ~~依賴管理方式~~ → 分析與建議見 FND-0003（Proposed）。目前不需核准：TXT 第一版採 DirectWrite，P0–P4 不引入任何第三方庫。
 - **測試框架**：目前以退出碼＋CTest，無框架依賴。引入 Catch2／GoogleTest 需先解上一條。
 
 ## 公開型別的設計慣例

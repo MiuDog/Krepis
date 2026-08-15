@@ -1,0 +1,4 @@
+interface:
+  display_name: "Focused Architecture Diagram"
+  short_description: "分析指定範圍並繪製可於 VS Code 預覽的架構圖"
+  default_prompt: "使用 $focused-architecture-diagram 分析指定部分的架構類型，並產生可在 VS Code 預覽的 Mermaid 核心架構圖。"
