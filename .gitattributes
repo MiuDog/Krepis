@@ -1,0 +1,22 @@
+# 本 repo 內一律以 LF 存放，避免跨 Windows／Linux／macOS 產生假 diff。
+# 全域 core.autocrlf 設定不影響本檔的判定。
+* text=auto eol=lf
+
+# 必須為 CRLF 的 Windows 專屬檔案
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+*.sln    text eol=crlf
+*.vcxproj text eol=crlf
+*.props  text eol=crlf
+
+# 二進位
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+*.ttf binary
+*.otf binary
+*.lib binary
+*.dll binary
+*.exe binary
