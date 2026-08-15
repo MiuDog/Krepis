@@ -5,7 +5,8 @@
       "name": "Win32-MSVC",
       "includePath": [
         "${workspaceFolder}/include",
-        "${workspaceFolder}/src"
+        "${workspaceFolder}/src",
+				"${workspaceFolder}"
       ],
       "defines": [
         "_WIN32",
