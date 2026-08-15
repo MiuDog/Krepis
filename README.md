@@ -49,13 +49,37 @@ client 不得是任何規則的唯一實作。**一條規則只能有一個實�
 
 ## 建置
 
-需要 Visual Studio 2022 BuildTools（含 C++ 工作負載）。CMake 與 Ninja 隨其內建。
+### 前置需求
 
+需要 Visual Studio 2022 BuildTools（含「使用 C++ 的桌面開發」工作負載）。本機的 CMake 與
+CTest 隨 BuildTools 內建，但不在 `PATH` 上；請在專案根目錄以 PowerShell 執行以下指令。
+
+```powershell
+$cmake = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+$ctest = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe'
+
+& $cmake --preset msvc-x64
+& $cmake --build build/msvc-x64 --config Debug
+& $ctest --test-dir build/msvc-x64 -C Debug --output-on-failure
 ```
-cmake --preset msvc-x64
-cmake --build build/msvc-x64 --config Debug
-ctest --test-dir build/msvc-x64 -C Debug --output-on-failure
-```
+
+VS Code 使用者也可以執行 `Tasks: Run Task` → `Verify`，一次完成相同的設定、編譯與測試流程。
+
+設定完成時會顯示 `Build files have been written to`；編譯完成後會產生
+`build/msvc-x64/Debug/krepis.lib`，測試結果應為 `100% tests passed`。
+
+### 編輯器診斷
+
+專案同時提供 Microsoft C/C++ 與 clangd 所需的 C++20、`include/` 搜尋路徑設定。
+若新增或修改設定後紅線未立即消失，請在 VS Code 執行 `clangd: Restart language server`。
+
+### 建置排錯
+
+| 訊息 | 處理方式 |
+|---|---|
+| 找不到 `cmake` 或 `ctest` | 使用上方完整路徑指令，不要假設工具已加入 `PATH`。 |
+| `MSB6001`，並提到重複的 `Path`／`PATH` | 關閉目前終端機，從開始功能表重新開啟 **Developer PowerShell for VS 2022**，再執行上方指令；不要修改系統 `PATH`。 |
+| clangd 顯示找不到 `krepis/version.hpp` 或只使用 C++14 | 確認從專案根目錄開啟 VS Code，並重新啟動 clangd；clangd 會讀取根目錄的 `compile_flags.txt`。 |
 
 ## 原始碼慣例
 

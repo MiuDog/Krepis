@@ -30,6 +30,16 @@
       "problemMatcher": []
     },
     {
+      "label": "Verify",
+      "detail": "依序執行設定、編譯與測試，作為本專案的單一驗證入口。",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "cmake: configure (msvc-x64)",
+        "ctest: test (Debug)"
+      ],
+      "problemMatcher": []
+    },
+    {
       "label": "cmake: configure (ninja, 產生 compile_commands.json)",
       "detail": "需在 VS 開發者命令提示字元中執行，Ninja 產生器需要已載入的 MSVC 環境。",
       "type": "process",
