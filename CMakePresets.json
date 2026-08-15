@@ -11,6 +11,18 @@
       "cacheVariables": {
         "KREPIS_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "ninja-x64",
+      "displayName": "Ninja x64 (需已載入 MSVC 開發者環境)",
+      "description": "Visual Studio 產生器不會輸出 compile_commands.json；本 preset 供 IntelliSense 與外部工具使用。",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/ninja-x64",
+      "cacheVariables": {
+        "KREPIS_BUILD_TESTS": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     }
   ],
   "buildPresets": [

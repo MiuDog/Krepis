@@ -1,0 +1,31 @@
+{
+  // cmake 與 ctest 隨 VS 2022 BuildTools 內建，且不在系統 PATH 上。
+  "cmake.cmakePath": "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe",
+  "cmake.ctestPath": "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/ctest.exe",
+  "cmake.useCMakePresets": "always",
+  "cmake.configureOnOpen": false,
+
+  // 原始碼一律無 BOM 的 UTF-8、LF。MSVC 的 /utf-8 由 CMakeLists 全域提供；
+  // 若此處被改成帶 BOM 或 CRLF，跨平台工具鏈會出問題。
+  "files.encoding": "utf8",
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+
+  "[cpp]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
+  },
+  "[cmake]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
+  },
+
+  "C_Cpp.default.cppStandard": "c++20",
+  "C_Cpp.default.intelliSenseMode": "windows-msvc-x64",
+
+  "files.associations": {
+    "*.hpp": "cpp",
+    "*.h": "cpp"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  // cmake／ctest 不在 PATH 上，因此一律以完整路徑呼叫。
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cmake: configure (msvc-x64)",
+      "type": "process",
+      "command": "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe",
+      "args": ["--preset", "msvc-x64"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "cmake: build (Debug)",
+      "type": "process",
+      "command": "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe",
+      "args": ["--build", "build/msvc-x64", "--config", "Debug"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "ctest: test (Debug)",
+      "type": "process",
+      "command": "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/ctest.exe",
+      "args": ["--test-dir", "build/msvc-x64", "-C", "Debug", "--output-on-failure"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "dependsOn": ["cmake: build (Debug)"],
+      "problemMatcher": []
+    },
+    {
+      "label": "cmake: configure (ninja, 產生 compile_commands.json)",
+      "detail": "需在 VS 開發者命令提示字元中執行，Ninja 產生器需要已載入的 MSVC 環境。",
+      "type": "process",
+      "command": "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe",
+      "args": ["--preset", "ninja-x64"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ]
+}
