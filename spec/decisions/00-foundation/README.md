@@ -14,12 +14,13 @@
 | 決策 | 狀態 | 主題 |
 |---|---|---|
 | [FND-0001](FND-0001-scope-language-boundary-and-rejections.md) | Accepted | 範圍、語言邊界判準與拒絕清單 |
-| [FND-0003](FND-0003-dependency-management.md) | **Proposed** | 第三方依賴以 CMake FetchContent 取得；淘汰 vcpkg |
 | [FND-0002](FND-0002-c-abi-error-memory-and-threading.md) | Accepted | C ABI 邊界、錯誤模型、arena 與釋放契約、執行緒模型（**分工線除外**） |
+| [FND-0003](FND-0003-dependency-management.md) | **Proposed** | 第三方依賴以 CMake FetchContent 取得；淘汰 vcpkg |
 
 FND-0002 原含的「同步／背景分工線」（D1）已分離至
-[`LAY-0001`](../02-layout/LAY-0001-sync-background-split-and-frame-budget.md)，
-狀態 `Proposed`，**刻意待 P0 實測後才核准**——其正確性只能量、不能推。
+[`LAY-0001`](../02-layout/LAY-0001-sync-background-split-and-frame-budget.md)。
+該決策刻意停在 `Proposed` 直到 P0 實測完成，**已於 2026-08-16 通過並核准**——
+其正確性只能量、不能推，而實測也確實推翻了報告中一項未經充分測試的複雜度主張。
 
 ## 待決問題
 
