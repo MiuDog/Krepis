@@ -1,0 +1,34 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "msvc-x64",
+      "displayName": "MSVC x64 (Visual Studio 2022 BuildTools)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/msvc-x64",
+      "cacheVariables": {
+        "KREPIS_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "msvc-x64-debug", "configurePreset": "msvc-x64", "configuration": "Debug" },
+    { "name": "msvc-x64-release", "configurePreset": "msvc-x64", "configuration": "Release" }
+  ],
+  "testPresets": [
+    {
+      "name": "msvc-x64-debug",
+      "configurePreset": "msvc-x64",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "msvc-x64-release",
+      "configurePreset": "msvc-x64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "version": "0.2.1",
+  "installedAt": "2026-08-15T16:25:06.082Z",
+  "files": {
+    ".claude/skills/agent-entry/SKILL.md": "06434ad8186a01cb725e1f082a043dc0dea879401b966743306d22e9be7ea84c",
+    ".claude/skills/human-intent/SKILL.md": "3dcea24c46434ffc26297943eec0d9be2dcf9a1dbec96d1b3ed36cc09dd67440",
+    ".claude/skills/model-dispatch/SKILL.md": "5214e86418988357a41f5016be053ebdfdb5818219966e1bbbc141a58fc79b68",
+    ".claude/skills/task-delivery/scripts/readback.mjs": "2fcacc64e7c7212b2d0b5911588753e21d087445ac317acbab6ee70fcf7e7d1c",
+    ".claude/skills/task-delivery/SKILL.md": "10100c6d5e5f924cf075679904873e9fa494d7011a1624282037d9f761a5bc45",
+    ".claude/skills/task-development/SKILL.md": "0f8c0209ea6673e37495440d1d6349269493b8fed729d382bfe7c6e9d7dbd2ef",
+    ".claude/skills/task-planning/SKILL.md": "5edffab2c357342e126254c2e96bb2c49f9c2df77d9a1afde51d9f723900f73f",
+    ".claude/skills/work-protocol/SKILL.md": "c80a8970b24b8f7f08dc341c5bc7a47235f1c5d4ed9d49b7481192ef4f0f8832",
+    ".claude/docs/delegation-prompts.md": "d019ff8c1e3880bc999e78121c761d1ef61c2e4e131ee7896301874de8a08323",
+    ".agents/skills/agent-entry/SKILL.md": "06434ad8186a01cb725e1f082a043dc0dea879401b966743306d22e9be7ea84c",
+    ".agents/skills/human-intent/SKILL.md": "3dcea24c46434ffc26297943eec0d9be2dcf9a1dbec96d1b3ed36cc09dd67440",
+    ".agents/skills/model-dispatch/SKILL.md": "5214e86418988357a41f5016be053ebdfdb5818219966e1bbbc141a58fc79b68",
+    ".agents/skills/task-delivery/scripts/readback.mjs": "2fcacc64e7c7212b2d0b5911588753e21d087445ac317acbab6ee70fcf7e7d1c",
+    ".agents/skills/task-delivery/SKILL.md": "10100c6d5e5f924cf075679904873e9fa494d7011a1624282037d9f761a5bc45",
+    ".agents/skills/task-development/SKILL.md": "0f8c0209ea6673e37495440d1d6349269493b8fed729d382bfe7c6e9d7dbd2ef",
+    ".agents/skills/task-planning/SKILL.md": "5edffab2c357342e126254c2e96bb2c49f9c2df77d9a1afde51d9f723900f73f",
+    ".agents/skills/work-protocol/SKILL.md": "c80a8970b24b8f7f08dc341c5bc7a47235f1c5d4ed9d49b7481192ef4f0f8832",
+    ".agents/delegation-prompts.md": "d019ff8c1e3880bc999e78121c761d1ef61c2e4e131ee7896301874de8a08323"
+  }
+}
