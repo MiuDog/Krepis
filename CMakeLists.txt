@@ -30,6 +30,7 @@ add_library(krepis)
 add_library(krepis::krepis ALIAS krepis)
 
 target_sources(krepis PRIVATE
+    src/arena.cpp
     src/version.cpp
 )
 

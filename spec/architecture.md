@@ -71,8 +71,11 @@ IME 組字中的文字**會佔空間、會影響換行與游標位置**，因此
 
 ### 位置的來源有兩種
 
-流式版面的位置是**算出來的**，空間版面的位置是**存起來的**。同一份 node tree 要同時支援兩者，
-因此節點本身不得假設位置的來源。
+流式版面的位置是**算出來的**，空間版面的位置是**存起來的**。同一份 ObjectStore 與
+`Page → Container → Block` 模型要同時支援兩者，但不要求同一 Block 無條件維護兩個投影。
+位置語意屬於擁有該 Block 的 Flow／Spatial Container，Block 本身不得假設位置來源；
+跨位置重用以唯讀即時引用表達。具體模型見
+[`DOC-0001`](decisions/01-document/DOC-0001-object-tree-stable-id-reference-and-composition.md)。
 
 ## 手寫是獨立圖層
 

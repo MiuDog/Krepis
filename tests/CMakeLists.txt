@@ -1,7 +1,22 @@
 # 第一版不引入測試框架依賴：以退出碼作為 pass／fail，交由 CTest 判定。
 # 引入框架（Catch2／GoogleTest）需在依賴管理方式定案後另行決定。
 
-add_executable(krepis_version_test version_test.cpp)
-target_link_libraries(krepis_version_test PRIVATE krepis::krepis)
+function(krepis_add_test name source)
+    add_executable(${name} ${source})
+    target_link_libraries(${name} PRIVATE krepis::krepis)
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    if(MSVC)
+        target_compile_options(${name} PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(${name} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
 
+krepis_add_test(krepis_version_test version_test.cpp)
 add_test(NAME krepis.version COMMAND krepis_version_test)
+
+krepis_add_test(krepis_error_test error_test.cpp)
+add_test(NAME krepis.error COMMAND krepis_error_test)
+
+krepis_add_test(krepis_arena_test arena_test.cpp)
+add_test(NAME krepis.arena COMMAND krepis_arena_test)
