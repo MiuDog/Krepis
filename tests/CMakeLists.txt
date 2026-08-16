@@ -20,3 +20,15 @@ add_test(NAME krepis.error COMMAND krepis_error_test)
 
 krepis_add_test(krepis_arena_test arena_test.cpp)
 add_test(NAME krepis.arena COMMAND krepis_arena_test)
+
+krepis_add_test(krepis_object_id_test object_id_test.cpp)
+add_test(NAME krepis.object_id COMMAND krepis_object_id_test)
+
+krepis_add_test(krepis_id_generator_test id_generator_test.cpp)
+add_test(NAME krepis.id_generator COMMAND krepis_id_generator_test)
+
+krepis_add_test(krepis_leaf_key_test leaf_key_test.cpp)
+add_test(NAME krepis.leaf_key COMMAND krepis_leaf_key_test)
+
+krepis_add_test(krepis_intrusive_ptr_test intrusive_ptr_test.cpp)
+add_test(NAME krepis.intrusive_ptr COMMAND krepis_intrusive_ptr_test)

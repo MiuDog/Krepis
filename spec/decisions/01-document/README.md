@@ -12,6 +12,8 @@ node tree 的形狀、stable ID、schema 與其版本遷移、序列化 codec。
 
 - [`DOC-0001`](DOC-0001-object-tree-stable-id-reference-and-composition.md)：物件樹、stable ID、
   即時引用與 composing region 的模型位置（**Accepted**）。
+- [`DOC-0002`](DOC-0002-object-id-representation-and-generation.md)：ObjectId 的位元表示、
+  強型別包裝、生成與正規編碼（**Accepted**）。補上 DOC-0001 留給後續的四項，使 ObjectId 可實作。
 
 ## 待決問題
 

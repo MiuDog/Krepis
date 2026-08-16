@@ -1,7 +1,7 @@
 # Krepis — Agent 作業入口（AGENTS.md）
 
 Krepis 是**結構化筆記的領域中立基座庫**，以 C++20 撰寫，用 CMake 建置。
-公開標頭在 `include/krepis/`，實作在 `src/`，測試在 `tests/`（CTest），決策在 `docs/decisions/`。
+公開標頭在 `include/krepis/`，實作在 `src/`，測試在 `tests/`（CTest），決策在 `spec/decisions/`。
 **不含任何特定產品的語意**——範圍與拒絕清單見 `README.md`。
 
 本檔為通用入口（Codex 等工具原生讀取；CLAUDE.md / GEMINI.md 內容應與本檔一致或直接指向本檔）。
@@ -29,6 +29,9 @@ Krepis 是**結構化筆記的領域中立基座庫**，以 C++20 撰寫，用 C
 - **拒絕清單優先於便利。** 產品語意（計畫、repo binding、workflow、治理格式、導覽）
   一律不得進入本庫，即使「放這裡比較方便」。判準：**Jotist 需不需要？**
 - 公開介面尚未穩定（`0.0.1`），但**新增公開標頭前必須先確認它通過上述判準**。
+- 除 `spec/decisions/05-ink/` 外，後續決策文件必須遵守
+  [`spec/decisions/README.md`](spec/decisions/README.md) 的全局最佳解、聚焦架構圖、具體例子與
+  偏離建議加嚴規則。`05-ink` 保持人類主導。
 
 ## 環境事實
 

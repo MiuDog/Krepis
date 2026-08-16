@@ -77,6 +77,11 @@ ObjectStore 的 map、hash table 或 arena 實體順序沒有文件語意。Flow
 child sequence；Spatial 布局只存在於 placement。`posIndex` 是從順序結構查出的衍生值，
 不是每次插入後重寫所有後方物件的權威欄位。
 
+Flow entry 的 `LocationIndex.sequence_handle` 由
+[`LAY-0002` D11](../02-layout/LAY-0002-invalidation-offset-and-viewport-index.md) 具體化為
+authority-owned `leaf_key`；Spatial entry 使用 placement locator。持久錨點仍只能使用 stable
+`BlockId`。
+
 ## D3：內容只有一個 owner，跨位置重用一律使用即時引用
 
 - 來源改變後，所有引用顯示最新內容。

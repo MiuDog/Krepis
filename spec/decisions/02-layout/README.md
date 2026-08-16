@@ -14,7 +14,7 @@
 | 決策 | 狀態 | 主題 |
 |---|---|---|
 | [LAY-0001](LAY-0001-sync-background-split-and-frame-budget.md) | **Proposed** | 同步／背景的分工線與一幀預算 |
-| [LAY-0002](LAY-0002-invalidation-offset-and-viewport-index.md) | **Proposed**（D1–D2 Accepted） | 失效傳播、偏移與 viewport 索引 |
+| [LAY-0002](LAY-0002-invalidation-offset-and-viewport-index.md) | **Proposed**（D1–D18 Accepted） | 失效傳播、偏移與 viewport 索引 |
 
 `LAY-0001` **刻意不在 P0 實測前核准**：它的正確性取決於「視窗內的增量重排 ＋ display list
 產出能否穩定在一幀內完成」，那是只能量、不能推的數字。在拿到數字前核准任一方案，
@@ -39,9 +39,9 @@ Jotist 作為介面逼迫函數」是同一條理由，遞迴作用在模型層�
 - **`LAY-0002` 尚未裁決的資料結構（P0 已證實為實際缺口，優先度最高）。**
   P0 spike 的 `layout()` 對全部段落重算 `y_offset`，實測為 $O(N)$：
   $N=10^6$ 時 p99 4.89ms，佔 120Hz 預算 59%（`tasks/p0-spike-report.md` 第六節）。
-  **正解方向**：不儲存絕對 `y_offset`，改為只存高度並配合前綴和結構
-  （Fenwick／order-statistic tree）或「偏移有效至索引 $k$」的延遲物化，
-  使編輯第 $k$ 段只需 $O(\log N)$ 或 $O(\text{可見})$ 得出視窗座標。
+  **已選方向**：不儲存絕對 `y_offset`，改用 `LAY-0002` 選定的 Chunked B+ tree／Block rope
+  保存順序與分塊聚合，配合延遲物化，使編輯第 $k$ 段只需 $O(\log N)$ 或
+  $O(\text{可見})$ 得出視窗座標。Leaf 容量與 split／merge 門檻仍待裁決。
   **P1 必須真正實作，不得沿用 spike 做法。**
 - 失效傳播的粒度是什麼？段落？行？run？
 - **流式與空間如何共用同一份 ObjectStore 與 Container 模型**：流式的位置由 child sequence

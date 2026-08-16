@@ -66,8 +66,30 @@ identity、權限、ink、多平台。
 3. undo 的單位是「一次確定」而非一個 rune，且在兩個視圖產生一致結果。
 4. N 個段落的文件，打字時每幀的 layout ＋ display list 產出時間 ≤ P0 定下的預算。
 5. **打一個字時重算的節點數不隨文件長度成長。**
+6. Intrusive reference-count 壓力測試結束並 drain reclamation queue 後，所有 node 都恰好銷毀一次，
+   且配置總數等於釋放總數。
+7. UI 執行緒釋放最後一個 snapshot reference 時，node destructor 不得在 UI 執行緒執行；測試必須
+   記錄並斷言實際 destructor thread。
+8. 舊 snapshot 背景走訪與新 revision 高頻發布並行時，舊 snapshot 的內容 hash 全程不變，且不得
+   出現 use-after-free、double release、reference-count underflow／overflow 或 data race 證據。
+9. Intrusive counter 與 `std::shared_ptr<const Node>` 基準實作必須在相同 retain／release、COW edit、
+   跨執行緒 handoff 與深 DAG 回收 workload 下比較時間與峰值記憶體。測試前先登記容許回歸範圍；
+   intrusive 方案若沒有可重現的整體優勢，就重開 `LAY-0002` D17。
 
 第 5 條把「增量」從宣稱變成可測。**沒有這一條，前四條都可能在小文件上假性通過。**
+
+第 6–9 條是 [`LAY-0002` D17](../spec/decisions/02-layout/LAY-0002-invalidation-offset-and-viewport-index.md)
+偏離原建議、直接採 intrusive atomic reference count 所增加的嚴格閘門。除了機器測試，人類核准者
+還必須逐行讀完：
+
+- 所有 owning edge 是否只使用 `IntrusivePtr<const T>`。
+- 是否有人從未保護 raw pointer 建立新 owner。
+- `retain`／`release` memory order 是否只由單一封裝實作。
+- Snapshot DAG 是否可能形成 owning cycle。
+- Reclamation queue 的 `noexcept` transfer、drain 與 shutdown path 是否完整。
+
+Race detector 若在主要 MSVC 工具鏈不可用，必須增加具備相應能力的第二工具鏈或等價競態證據；
+不得把「本機多跑幾次沒有失敗」算成通過。
 
 > ⚠️ **P0 spike 並未滿足第 5 條。** 其 `layout()` 對全部段落重算 `y_offset`，
 > 實測為 $O(N)$（$N=10^6$ 時 p99 4.89ms，佔預算 59%；
@@ -76,6 +98,24 @@ identity、權限、ink、多平台。
 >
 > 驗收時複雜度必須測到**常數項被超越為止**——三個數量級以內的平坦曲線量到的是常數項，
 > 不是複雜度。
+
+#### LAY-0002 D17 的強制閘門：目前狀態
+
+D17 因偏離原建議（未採 `std::shared_ptr`）而升級了七項強制閘門。
+基礎實作已完成，但**七項中只有三項達成**，其餘在 P1 結束前必須補齊：
+
+| # | 閘門 | 狀態 |
+|---|---|---|
+| 1 | `IntrusivePtr` copy／move／self-assignment／跨型別轉換的精確 retain／release 測試 | ✅ `tests/intrusive_ptr_test.cpp` |
+| 2 | 多執行緒隨機複製／釋放；drain 後每個 node 恰好銷毀一次 | ✅ 8 執行緒 × 2000 次 |
+| 3 | 舊 snapshot 背景走訪與新 revision 連續發布並行時，舊內容 hash 保持不變 | ❌ **需先有 FlowSequence 與 snapshot 發布** |
+| 4 | 最後 reference 於 UI 執行緒釋放時，destructor 在 reclamation worker 執行 | ⚠️ **部分**：延後銷毀已驗證，但背景 worker 尚未實作，目前由測試手動 `drain()` |
+| 5 | AddressSanitizer 與 race detector／第二工具鏈 | ❌ **未做**。MSVC 無可假定的 ThreadSanitizer，不得以「本機沒報錯」代替競態證據 |
+| 6 | 與 `std::shared_ptr` 基準比較 retain／release、COW edit、跨執行緒 handoff、深 DAG 回收 | ❌ **未做**。若無可重現的整體優勢，D17 必須重開 |
+| 7 | 人工逐行審查所有 memory order、owning edge、borrowed pointer lifetime 與 shutdown drain path | ❌ **需人類**。此項不可由 AI 自我核可 |
+
+**第 6 項是重開條件**：D17 是刻意偏離建議的決策，其正當性建立在效能優勢上；
+沒有 benchmark 就沒有正當性。
 
 ### P1.5 —— 能存檔（刻意可丟棄）
 
