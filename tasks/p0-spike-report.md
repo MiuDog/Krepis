@@ -87,7 +87,7 @@
 1. **核准 `LAY-0001`**（狀態從 `Proposed` 改為 `Accepted`，選定方案 A）。
 2. **正式進入 P1 垂直切片**：
    - 核心（C++）：Node Tree、Single Block、增量流式/空間排版、Composing Region、Selection、Undo/Redo。
-   - 外殼（Jotist）：Flutter 雙視圖並列 Display List 渲染與鍵盤/IME 串接。
+   - 外殼（Notist）：Flutter 雙視圖並列 Display List 渲染與鍵盤/IME 串接。
 
 ---
 

@@ -121,6 +121,42 @@ raw Node* 暫存於全域
 此時記憶體可能已排入回收，屬 use-after-free／resurrection。P1 所有 retain 都必須源自仍有效的
 `IntrusivePtr`。
 
+### Owner 建立邊界
+
+```text
+合法：make_intrusive<T>(constructor args) -> IntrusivePtr<const T>
+合法：copy／move 現有 IntrusivePtr<const T>
+合法：在 owner 詞法範圍內借用 const T*
+
+禁止：public adopt(raw)
+禁止：raw->retain()／raw->release()
+禁止：IntrusivePtr<T> 或發布後 set_child()
+```
+
+不使用 macro。Factory、private access 與 const-qualified owning type 才是編譯器可驗證的安全邊界。
+Node 必須 bottom-up 建構：child 先存在，parent constructor 再接收 child owner；跨樹引用使用 stable
+ID，不使用 owning pointer，因此不形成 reference cycle。
+
+## Reclamation queue 狀態
+
+```mermaid
+stateDiagram-v2
+  [*] --> Running
+  Running --> Stopping : stop external producers and request shutdown
+  Stopping --> Draining : worker processes queued parents and newly queued children
+  Draining --> Draining : outstanding nodes remain
+  Draining --> Finalizing : apparent idle
+  Finalizing --> Draining : an entered producer published a node
+  Finalizing --> Stopped : active enqueuers zero and head and outstanding both empty
+  Stopped --> [*] : worker joined and counts verified
+```
+
+Enqueue 在發布 node 到 lock-free head 前先增加 outstanding count，並以 active-enqueuer guard 防止
+worker 在 producer 尚未完成發布時宣告 Stopped。`Finalizing` 是內部關門閘門：它先拒絕新的
+enqueue，再等待已取得 guard 的 producer 完成；之後若發現 head 或 outstanding 非零，就回到
+`Draining`，否則才進入 `Stopped`。Worker 是唯一執行 destructor 的執行緒；shutdown 呼叫者只要求
+停止並 join worker，不直接 delete node。
+
 ## ObjectStore snapshot
 
 ```mermaid

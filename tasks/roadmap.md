@@ -50,7 +50,7 @@ authority 是**已知可解的工作量**，不是未知。先做它意味著數
 - composing region（一級概念）
 - display list 產出
 
-**外殼（Jotist）**
+**外殼（Notist）**
 - 流式頁面與空間頁面並列，各自執行 display list
 - 流式頁面唯讀引用空間 viewport；空間頁面唯讀引用流式 Block 區間
 - 送鍵盤／IME／指標事件
@@ -102,7 +102,7 @@ Race detector 若在主要 MSVC 工具鏈不可用，必須增加具備相應能
 #### LAY-0002 D17 的強制閘門：目前狀態
 
 D17 因偏離原建議（未採 `std::shared_ptr`）而升級了七項強制閘門。
-基礎實作已完成，但**七項中只有三項達成**，其餘在 P1 結束前必須補齊：
+基礎實作已完成，**四項達成**（含第 6 項），其餘在 P1 結束前必須補齊：
 
 | # | 閘門 | 狀態 |
 |---|---|---|
@@ -111,15 +111,16 @@ D17 因偏離原建議（未採 `std::shared_ptr`）而升級了七項強制閘�
 | 3 | 舊 snapshot 背景走訪與新 revision 連續發布並行時，舊內容 hash 保持不變 | ❌ **需先有 FlowSequence 與 snapshot 發布** |
 | 4 | 最後 reference 於 UI 執行緒釋放時，destructor 在 reclamation worker 執行 | ⚠️ **部分**：延後銷毀已驗證，但背景 worker 尚未實作，目前由測試手動 `drain()` |
 | 5 | AddressSanitizer 與 race detector／第二工具鏈 | ❌ **未做**。MSVC 無可假定的 ThreadSanitizer，不得以「本機沒報錯」代替競態證據 |
-| 6 | 與 `std::shared_ptr` 基準比較 retain／release、COW edit、跨執行緒 handoff、深 DAG 回收 | ❌ **未做**。若無可重現的整體優勢，D17 必須重開 |
+| 6 | 與 `std::shared_ptr` 基準比較 | ✅ **Spike 4 完成（2026-08-17）**。IntrusivePtr 無效能優勢；偏離理由已改為架構需求（延後銷毀），不再以效能為正當性 |
 | 7 | 人工逐行審查所有 memory order、owning edge、borrowed pointer lifetime 與 shutdown drain path | ❌ **需人類**。此項不可由 AI 自我核可 |
 
-**第 6 項是重開條件**：D17 是刻意偏離建議的決策，其正當性建立在效能優勢上；
-沒有 benchmark 就沒有正當性。
+**第 6 項已完成但結果翻轉**：benchmark 證明效能不是理由。D17 已改寫偏離理由為
+「延後銷毀是架構需求，shared_ptr 無法在保留 make_shared 合併配置的前提下提供 custom deleter」。
+新的重開條件見 LAY-0002 D17。
 
 ### P1.5 —— 能存檔（刻意可丟棄）
 
-最簡單的檔案讀寫，**不是 authority**。目的只有一個：**讓 Jotist 能開始每天被使用。**
+最簡單的檔案讀寫，**不是 authority**。目的只有一個：**讓 Notist 能開始每天被使用。**
 
 dogfood 是整個計畫的驗證機制——抽象設計的錯誤只有在被實際使用後才會暴露。
 沒有存檔就沒有 dogfood。
@@ -142,7 +143,7 @@ dogfood 是整個計畫的驗證機制——抽象設計的錯誤只有在被實
 | 部分 | 需要真筆嗎 | 排在哪 |
 |---|---|---|
 | **Krepis 的 ink 資料模型**（圖層語意、anchor、reflow 行為、取樣點儲存） | ❌ 不需要 | **維持 P3**，以合成筆跡與錄製軌跡驗證 |
-| **Jotist 的擷取路徑、快速路徑繪製、手感與延遲** | ✅ **需要 iPad** | **與 iOS 平台支援綁定，落在 P5** |
+| **Notist 的擷取路徑、快速路徑繪製、手感與延遲** | ✅ **需要 iPad** | **與 iOS 平台支援綁定，落在 P5** |
 
 這個拆法成立的理由：`spec/decisions/05-ink/` 的範圍本來就明寫「**不含繪製**」。
 需要真筆的部分不在 Krepis 裡。
@@ -171,6 +172,6 @@ Linux、macOS、Android、iOS。此時文字 shaping 可能需要從 DirectWrite
 - ~~一幀預算的目標數字~~ → 已定：120Hz，8.33ms 總預算（2026-08-16）。Krepis 的佔比待 P0 實測校正
 - **ink 的驗收裝置**：筆為 Apple Pencil（iPad），開發機為 Windows。Krepis 的 ink 資料模型可在
   Windows 以合成／錄製軌跡驗證，但手感與延遲的驗收與 iOS 平台支援綁定。**見 P3 相依風險。**
-- **是否具備 macOS ＋ Xcode**：在 iPad 上跑自製 app 的硬前置。若無，連「錄製真實 Apple Pencil
-  軌跡」都做不到，ink 資料模型將完全建立在假設之上。**此問題應在 P1 期間確認，不要拖到 P3。**
+- ~~是否具備 macOS ＋ Xcode~~ → 已確認：**具備**（2026-08-17）。P3 之前可在 iPad 上錄製
+  Apple Pencil 軌跡作為 fixture。
 - **依賴管理方式**：引入任何第三方庫前必須先定（見 `spec/decisions/00-foundation/README.md`）

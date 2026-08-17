@@ -56,17 +56,21 @@ prefix extent 求出，不逐項重寫。
 
 ## D3：FlowRangeEmbed 沿用來源布局，不依引用框重新換行
 
-FlowRangeEmbed 先以 Flow 的一般非全寬模式產生具有固定比例的來源布局；放入 SpatialContainer
-後，只對該布局結果做等比例縮放，不依 Spatial viewport 的 frame width 重新換行。
+FlowRangeEmbed 先以 Flow 的一般（非全寬）模式產生來源布局；放入 SpatialContainer
+後，不依 Spatial frame 的寬度重新換行。
+
+Flow 只有兩種寬度模式：**一般**與**全寬**。Embed 一律使用一般寬度的來源布局，與使用者在
+流式頁面看到的結果一致。
 
 - Spatial Embed 不因自己的 frame width 建立新的文字 LayoutContext。
 - Embed 保留來源斷行、Block extent 比例與整體長寬比。
-- Viewport 只保存顯示範圍與等比例 transform，不做非等比拉伸。
 - 來源內容或一般模式的布局參數改變時，先更新來源布局，再讓 Embed 顯示更新後的結果。
-- Spatial frame 與來源比例不一致時採 fit、crop 或留白，尚未裁決。
+- **Spatial frame 寬度填滿來源布局寬度；高度方向若超出 frame 則裁切並允許垂直捲動。**
+  Frame 不做水平裁切或等比例整體縮放。
+- Viewport 只保存顯示範圍與垂直捲動偏移，不做非等比拉伸。
 
 這使 FlowSequence 與主要 FlowLayoutIndex 不必為每個 Spatial 引用框複製一份不同寬度的高度
-索引；在空間頁面中，文字的顯示尺寸可以隨整體等比例縮放，斷行結構保持不變。
+索引；在空間頁面中，文字以來源寬度呈現，長文件以垂直捲動瀏覽。
 
 ## D4：Flow 使用專用 Chunked B+ tree／Block rope
 
@@ -348,15 +352,73 @@ release():
 
 - 只能從既有 owning reference 複製新 reference；禁止由未保護 raw pointer `retain`，因此 P1 沒有
   weak acquire、resurrection 或 lock-free pointer promotion。
+- 不使用 macro 建立或保護 owner。Macro 不能限制 access、constness 或 lifetime；硬邊界由 private
+  `retain`／`release`／adopt path、`IntrusivePtr<const T>` 與唯一公開 factory 建立。
+- `make_intrusive<T>(...)` 一次完成 immutable node 建構並回傳 `IntrusivePtr<const T>`。發布後沒有
+  owning-edge setter；新 node 只能在 constructor 接收已存在的 child owner，以 bottom-up 建構保證
+  owning edge 不可能指回尚未存在的 parent。
 - Reference count 從 1 開始；underflow、overflow、double release 在測試與診斷建置必須立即失敗。
 - Node 發布後完全 immutable；owning edge 只向下形成 DAG，不得形成 reference cycle。
 - 最後一次 release 把唯一銷毀責任以 `noexcept` 路徑交給 reclamation queue；之後原執行緒不得再存取。
-- Shutdown 必須 drain queue，並證明配置數等於釋放數。
+- Reclamation queue 由單一背景 worker 銷毀 node；任意呼叫者不得直接執行 destructor。
+- Enqueue 必須先登記 outstanding node，再發布 Treiber-stack head，避免 consumer 先扣除造成計數下溢。
+- Shutdown 對外依 `Running → Stopping → Draining → Stopped` 執行：先停止並 join 外部 producer、
+  允許 destructor 產生的 child enqueue，再反覆 drain 到 idle。實作必須在 `Stopped` 前使用內部
+  `Finalizing` 閘門：先禁止新 producer、等待已進入 enqueue 的 producer 歸零，再同時確認 head 與
+  outstanding count 都是零；若仍找到已發布 node，就退回 `Draining`。
+- Worker 進入 `Stopped` 後才可被 shutdown 呼叫者 join，最後必須證明配置數等於釋放數。
+- `Finalizing` 或 `Stopped` 後的晚到 enqueue 是生命週期違約，必須立即終止，不能靜默洩漏。
 
 ### 偏離原建議：未採用 `std::shared_ptr<const Node>`
 
-原建議先使用標準 shared ownership，再以 benchmark 決定是否替換；本決策改選 intrusive counter，
-理由是優先取得全局效能、配置控制與資料區域性，而不是最低維護成本。
+原建議先使用標準 shared ownership，再以 benchmark 決定是否替換。本決策改選 intrusive counter。
+
+#### 原理由與實測結果
+
+原理由為「優先取得全局效能、配置控制與資料區域性」。
+
+Spike 4（2026-08-17，MSVC 19.44.35222 Release）在五類 workload 上比較 IntrusivePtr 與
+`std::shared_ptr`，**IntrusivePtr 在所有 workload 上均無可重現的整體效能優勢**：
+
+| Workload | intrusive | shared | ratio |
+|---|---|---|---|
+| retain/release 10M | 27,367 us | 26,639 us | 0.97x |
+| COW depth=16, 100k edits | 74,939 us | 44,319 us | **0.59x** |
+| 跨執行緒 handoff 1M | 50,977 us | 26,482 us | **0.52x** |
+| 深 DAG 回收 100k | 2,204 us | 1,200 us | **0.54x** |
+| 8t×1M 併發 retain/release | 104,427 us | 89,378 us | **0.86x** |
+
+ratio > 1 = intrusive 較快。完整報告見 `tasks/spike4-intrusive-vs-shared-report.md`。
+
+原因：`RefCounted` 基底需要 vtable（virtual destructor）＋ atomic 計數 ＋ reclaim 串接指標，
+使節點比 `std::shared_ptr` + `make_shared` 合併配置的版本大 67%（40 vs 24 bytes）；
+reclamation queue 的 Treiber CAS 加上後續 drain 的成本也超過 shared_ptr 的就地 delete。
+
+**效能不再是偏離理由。**
+
+#### 保留的理由：延後銷毀是架構需求
+
+`std::shared_ptr` 在最後一個擁有者釋放時**就地同步遞迴銷毀**。若 UI 執行緒是最後釋放者，
+深 snapshot DAG 的銷毀會卡住畫幀。IntrusivePtr + reclamation queue 把銷毀推到背景執行緒，
+使 UI 執行緒的 release 成本為 O(1)（一次 atomic decrement ＋ 一次 Treiber push）。
+
+要讓 `std::shared_ptr` 做到延後銷毀，需要 custom deleter。但 `std::make_shared` 不支援
+custom deleter——使用 custom deleter 必須改為 `std::shared_ptr<T>(new T(...), deleter)`，
+**每個節點變成兩次配置（物件 ＋ control block）**，配置數翻倍、cache locality 更差。
+這在 P1 的高頻 COW edit 路徑上不可接受。
+
+因此保留 IntrusivePtr 的理由是：
+
+1. **延後銷毀**——UI 執行緒不執行 destructor，這是架構級的 frame budget 保護。
+2. **shared_ptr 沒有低成本替代**——custom deleter 與 make_shared 互斥，配置翻倍。
+3. **整合度**——reclamation queue 已是 D9 的核心元件，intrusive counter 直接串接。
+
+#### 重開條件
+
+1. 若找到使 `std::shared_ptr` + 延後銷毀共存且不犧牲合併配置的方案（例如未來標準提案或
+   平台擴充），此決策可重開。
+2. 若 P1 實測延後銷毀在 frame budget 中佔比不顯著（即就地銷毀也能在 8.33ms 內完成），
+   此決策可重開。
 
 因此下列項目升級為 P1 強制閘門：
 
@@ -366,8 +428,8 @@ release():
 4. 最後一個 reference 在 UI 執行緒釋放時，實際 destructor 必須在 reclamation worker 執行。
 5. AddressSanitizer 與可用的 race detector／第二工具鏈測試；目前 MSVC 沒有可假定存在的
    ThreadSanitizer，因此不得以「本機沒有報錯」代替競態證據。
-6. 與 `std::shared_ptr` 基準實作比較 retain／release、COW edit、跨執行緒 handoff、深 DAG 回收的時間
-   與記憶體；若沒有可重現的整體優勢，必須重開本決策。
+6. ~~與 `std::shared_ptr` 基準比較~~ → **已完成**（Spike 4, 2026-08-17）。效能無優勢，
+   理由已改為架構需求。
 7. 人工逐行審查所有 memory order、owning edge、borrowed pointer lifetime 與 shutdown drain path。
 
 ## D18：SnapshotId 分離 content revision 與 storage generation
@@ -396,13 +458,23 @@ D12–D16 的資料結構與演算法圖見
 D17–D18 的生命週期與 revision 流程見
 [`layout-revision-snapshot-data-flow.md`](../../../docs/architecture/layout-revision-snapshot-data-flow.md)。
 
+## D19：高度修正時的 scroll anchoring
+
+背景排版修正可見範圍之前的 Block 高度時，採 **anchor-to-first-visible-block** 策略：
+
+- 目前可見範圍內的第一個 Block 保持螢幕位置不變。
+- Scrollbar thumb 位置因總高改變而即時更新。
+- 可見 Block 之前的高度修正只影響 scrollbar，不造成畫面跳動。
+- 可見 Block 自身或之後的高度修正由 viewport 按既有流程更新，不需 anchoring。
+- Viewport 無法見到任何 Block（例如空文件）時 anchoring 不適用。
+
+此行為與 Chrome 的 overflow-anchor: auto 一致。
+
 ## 尚未決定
 
 - Chunked B+ tree 的 leaf 容量、fanout、low-water mark 與 relabel window 數值。
 - ObjectStore 的 Record page 容量、page-table fanout 與 compact 門檻。
-- Flow 一般非全寬模式的基準尺寸，以及 Spatial frame 比例不符時的 fit／crop／留白策略。
 - 未量測 Block 的估計高度與第一次開啟超長文件的物化策略。
-- 高度修正時的 scroll anchoring。
 - overscan 的單位、範圍與調整策略。
 - shaping、line breaking、extent、paint 與 hit-test index 的失效傳播。
 - 巢狀容器的失效停止條件與 reference view 的 cache key。

@@ -75,8 +75,8 @@ decisions/<NN-能力>/<代碼>-NNNN-kebab-case-主題.md
 |---|---|---|
 | [FND-0001](decisions/00-foundation/FND-0001-scope-language-boundary-and-rejections.md) | Accepted | Krepis 的範圍、語言邊界判準與拒絕清單 |
 | [FND-0002](decisions/00-foundation/FND-0002-c-abi-error-memory-and-threading.md) | Accepted | C ABI 邊界、錯誤模型、arena 與釋放契約、執行緒模型（分工線除外） |
-| [FND-0003](decisions/00-foundation/FND-0003-dependency-management.md) | **Proposed** | 第三方依賴以 CMake FetchContent 取得；淘汰 vcpkg；目前不關閉閘門，待首次引入依賴前核准 |
+| [FND-0003](decisions/00-foundation/FND-0003-dependency-management.md) | Accepted | 第三方依賴以 CMake FetchContent 取得；淘汰 vcpkg |
 | [DOC-0001](decisions/01-document/DOC-0001-object-tree-stable-id-reference-and-composition.md) | Accepted | 物件樹、stable ID、即時引用與組字疊加層 |
 | [DOC-0002](decisions/01-document/DOC-0002-object-id-representation-and-generation.md) | Accepted | ObjectId 的位元表示、強型別包裝、生成與正規編碼 |
 | [LAY-0001](decisions/02-layout/LAY-0001-sync-background-split-and-frame-budget.md) | Accepted | 同步／背景的分工線與一幀預算；P0 實測通過 |
-| [LAY-0002](decisions/02-layout/LAY-0002-invalidation-offset-and-viewport-index.md) | **Proposed**（D1–D18 已接受） | 失效傳播、偏移與可見範圍索引；分塊參數待 benchmark |
+| [LAY-0002](decisions/02-layout/LAY-0002-invalidation-offset-and-viewport-index.md) | **Proposed**（D1–D19 已接受） | 失效傳播、偏移與可見範圍索引；分塊參數待 benchmark |

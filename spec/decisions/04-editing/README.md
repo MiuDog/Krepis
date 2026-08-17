@@ -20,6 +20,13 @@ selection 模型、typed transaction、undo／redo。
 - **組字中的文字不進 undo stack**；一次確定才是一個 undo 單位。**此規則必須在模型層表達**，
   不得依賴外殼自律（違反 `FND-0001` 第 6 條）。
 
+## 已定方向（待正式 ADR 時展開）
+
+- **文字 undo 合併採固定時間窗**：連續打字若在閾值時間內，合併為同一個 undo 步。
+  閾值為 benchmark 參數，初始值參考 VS Code（約 1 秒打字暫停）。IME 一次確定已由
+  [`DOC-0001` D10](../01-document/DOC-0001-object-tree-stable-id-reference-and-composition.md)
+  定為一個 undo 單位，此時間窗只影響確定後的連續非 IME 打字。
+
 ## 決策
 
 （尚無）
