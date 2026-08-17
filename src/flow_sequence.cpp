@@ -252,4 +252,116 @@ IntrusivePtr<const FlowSequenceNode> FlowSequence::root() const noexcept {
     return root_;
 }
 
+// --- TreeCursor ---
+
+TreeCursor::TreeCursor(const FlowSequence& seq, std::size_t position)
+    : root_(seq.root()), global_position_(position) {
+    if (!root_) {
+        return;
+    }
+    assert(position < root_->block_count());
+
+    const FlowSequenceNode* node = root_.get();
+    std::size_t remaining = position;
+
+    while (!node->is_leaf()) {
+        const auto* internal = static_cast<const FlowInternalNode*>(node);
+        auto children = internal->children();
+        std::size_t idx = 0;
+        for (; idx + 1 < children.size(); ++idx) {
+            if (remaining < children[idx].subtree_block_count) {
+                break;
+            }
+            remaining -= children[idx].subtree_block_count;
+        }
+        ancestors_.push_back({internal, idx});
+        node = children[idx].child.get();
+    }
+
+    leaf_ = static_cast<const FlowLeafNode*>(node);
+    local_offset_ = remaining;
+}
+
+bool TreeCursor::is_valid() const noexcept {
+    return leaf_ != nullptr;
+}
+
+BlockId TreeCursor::current() const {
+    assert(leaf_ && "存取無效 cursor");
+    return leaf_->blocks()[local_offset_];
+}
+
+std::size_t TreeCursor::position() const noexcept {
+    return global_position_;
+}
+
+bool TreeCursor::advance() {
+    if (!leaf_) {
+        return false;
+    }
+
+    if (local_offset_ + 1 < leaf_->blocks().size()) {
+        ++local_offset_;
+        ++global_position_;
+        return true;
+    }
+
+    while (!ancestors_.empty()) {
+        auto& frame = ancestors_.back();
+        if (frame.child_index + 1 < frame.node->children().size()) {
+            ++frame.child_index;
+            const FlowSequenceNode* node =
+                frame.node->children()[frame.child_index].child.get();
+            while (!node->is_leaf()) {
+                const auto* internal = static_cast<const FlowInternalNode*>(node);
+                ancestors_.push_back({internal, 0});
+                node = internal->children()[0].child.get();
+            }
+            leaf_ = static_cast<const FlowLeafNode*>(node);
+            local_offset_ = 0;
+            ++global_position_;
+            return true;
+        }
+        ancestors_.pop_back();
+    }
+
+    leaf_ = nullptr;
+    return false;
+}
+
+bool TreeCursor::retreat() {
+    if (!leaf_ || global_position_ == 0) {
+        return false;
+    }
+
+    if (local_offset_ > 0) {
+        --local_offset_;
+        --global_position_;
+        return true;
+    }
+
+    while (!ancestors_.empty()) {
+        auto& frame = ancestors_.back();
+        if (frame.child_index > 0) {
+            --frame.child_index;
+            const FlowSequenceNode* node =
+                frame.node->children()[frame.child_index].child.get();
+            while (!node->is_leaf()) {
+                const auto* internal = static_cast<const FlowInternalNode*>(node);
+                auto last_idx = internal->children().size() - 1;
+                ancestors_.push_back({internal, last_idx});
+                node = internal->children()[last_idx].child.get();
+            }
+            leaf_ = static_cast<const FlowLeafNode*>(node);
+            local_offset_ = leaf_->blocks().size() - 1;
+            --global_position_;
+            return true;
+        }
+        ancestors_.pop_back();
+    }
+
+    assert(false && "retreat: global_position > 0 但找不到前一個 leaf");
+    return false;
+}
+
 }  // namespace krepis

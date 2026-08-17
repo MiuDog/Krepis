@@ -12,6 +12,7 @@ using krepis::FlowSequence;
 using krepis::FlowSequenceConfig;
 using krepis::FlowSequenceNode;
 using krepis::ObjectId;
+using krepis::TreeCursor;
 using krepis::default_reclamation_queue;
 using krepis::shutdown_default_reclamation_queue;
 using krepis_test::expect;
@@ -205,6 +206,156 @@ void test_large_sequence() {
     expect(all_correct, "1000 個 block 全部可正確取回");
 }
 
+// --- TreeCursor tests ---
+
+void test_cursor_single_element() {
+    auto seq = FlowSequence::empty().insert(0, make_block(1));
+    auto cursor = TreeCursor(seq, 0);
+
+    expect(cursor.is_valid(), "單元素 cursor 有效");
+    expect(cursor.current() == make_block(1), "單元素 cursor 指向正確 block");
+    expect(cursor.position() == 0, "單元素 cursor position == 0");
+    expect(!cursor.advance(), "單元素 cursor advance 回傳 false");
+    expect(!cursor.is_valid(), "advance 後 cursor 無效");
+}
+
+void test_cursor_forward_traversal() {
+    auto seq = FlowSequence::empty();
+    for (std::size_t i = 0; i < 10; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    auto cursor = TreeCursor(seq, 0);
+    bool all_correct = true;
+    for (std::size_t i = 0; i < 10; ++i) {
+        if (!cursor.is_valid() || cursor.current() != make_block(i + 1) ||
+            cursor.position() != i) {
+            all_correct = false;
+            break;
+        }
+        if (i < 9) {
+            expect(cursor.advance(), "中途 advance 成功");
+        }
+    }
+    expect(all_correct, "前向走訪所有 block 正確");
+    expect(!cursor.advance(), "最後一個 block 後 advance 回傳 false");
+}
+
+void test_cursor_backward_traversal() {
+    auto seq = FlowSequence::empty();
+    for (std::size_t i = 0; i < 10; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    auto cursor = TreeCursor(seq, 9);
+    bool all_correct = true;
+    for (std::size_t expected = 10; expected >= 1; --expected) {
+        if (!cursor.is_valid() || cursor.current() != make_block(expected)) {
+            all_correct = false;
+            break;
+        }
+        if (expected > 1) {
+            expect(cursor.retreat(), "中途 retreat 成功");
+        }
+    }
+    expect(all_correct, "後向走訪所有 block 正確");
+    expect(!cursor.retreat(), "第一個 block 後 retreat 回傳 false");
+    expect(cursor.is_valid(), "retreat 失敗後 cursor 仍有效");
+    expect(cursor.position() == 0, "retreat 失敗後 position 仍為 0");
+}
+
+void test_cursor_cross_leaf_boundaries() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+
+    auto seq = FlowSequence::empty(config);
+    constexpr std::size_t count = 30;
+    for (std::size_t i = 0; i < count; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    auto cursor = TreeCursor(seq, 0);
+    bool forward_ok = true;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (!cursor.is_valid() || cursor.current() != make_block(i + 1) ||
+            cursor.position() != i) {
+            forward_ok = false;
+            break;
+        }
+        if (i + 1 < count) {
+            cursor.advance();
+        }
+    }
+    expect(forward_ok, "跨 leaf 前向走訪全部正確");
+
+    bool backward_ok = true;
+    for (std::size_t i = count; i >= 1; --i) {
+        if (!cursor.is_valid() || cursor.current() != make_block(i) ||
+            cursor.position() != i - 1) {
+            backward_ok = false;
+            break;
+        }
+        if (i > 1) {
+            cursor.retreat();
+        }
+    }
+    expect(backward_ok, "跨 leaf 後向走訪全部正確");
+}
+
+void test_cursor_seek_middle() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+
+    auto seq = FlowSequence::empty(config);
+    for (std::size_t i = 0; i < 20; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    auto cursor = TreeCursor(seq, 10);
+    expect(cursor.is_valid(), "中間位置 cursor 有效");
+    expect(cursor.current() == make_block(11), "seek 到 position 10 正確");
+    expect(cursor.position() == 10, "position 回報 10");
+
+    cursor.advance();
+    expect(cursor.current() == make_block(12), "advance 後為 block 12");
+
+    cursor.retreat();
+    cursor.retreat();
+    expect(cursor.current() == make_block(10), "retreat 兩次後為 block 10");
+}
+
+void test_cursor_bidirectional() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+
+    auto seq = FlowSequence::empty(config);
+    for (std::size_t i = 0; i < 16; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    auto cursor = TreeCursor(seq, 0);
+    for (int i = 0; i < 8; ++i) {
+        cursor.advance();
+    }
+    expect(cursor.position() == 8, "前進 8 步後 position == 8");
+
+    for (int i = 0; i < 3; ++i) {
+        cursor.retreat();
+    }
+    expect(cursor.position() == 5, "後退 3 步後 position == 5");
+    expect(cursor.current() == make_block(6), "position 5 指向 block 6");
+
+    for (int i = 0; i < 10; ++i) {
+        cursor.advance();
+    }
+    expect(cursor.position() == 15, "再前進 10 步後 position == 15");
+    expect(cursor.current() == make_block(16), "最後一個 block");
+    expect(!cursor.advance(), "再 advance 到終點");
+}
+
 void test_reclamation_accounting() {
     auto& queue = default_reclamation_queue();
     auto baseline = queue.total_reclaimed();
@@ -243,6 +394,13 @@ int main() {
     test_interleaved_insert_remove();
     test_large_sequence();
     test_reclamation_accounting();
+
+    test_cursor_single_element();
+    test_cursor_forward_traversal();
+    test_cursor_backward_traversal();
+    test_cursor_cross_leaf_boundaries();
+    test_cursor_seek_middle();
+    test_cursor_bidirectional();
 
     shutdown_default_reclamation_queue();
     return krepis_test::report("krepis.flow_sequence");

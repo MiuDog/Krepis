@@ -112,4 +112,45 @@ private:
     IntrusivePtr<const FlowSequenceNode> root_;
 };
 
+// 依 LAY-0002 D15：snapshot-bound 的跨 leaf 走訪 cursor。
+//
+// 責任：以 ancestor stack 在 FlowSequence 上前進與後退，不依賴 sibling pointer。
+// 不負責：跨 revision 使用——cursor 綁定建立時的 snapshot。
+// 維持的不變條件：持有 root 的 IntrusivePtr，借用內部 node pointer。
+// 生命週期：cursor 有效期間 root 及其子孫不會被回收。
+// 錯誤語意：在無效 cursor 上存取 current() 以 assert 攔截。
+// 執行緒安全程度：單一執行緒使用。
+// 可否複製／移動：可搬移，不可複製（ancestor stack 為借用路徑，複製語意不明確）。
+class TreeCursor {
+public:
+    // 前置條件：position < seq.block_count()。空序列不能建立 cursor。
+    TreeCursor(const FlowSequence& seq, std::size_t position);
+
+    TreeCursor(const TreeCursor&) = delete;
+    TreeCursor& operator=(const TreeCursor&) = delete;
+    TreeCursor(TreeCursor&&) noexcept = default;
+    TreeCursor& operator=(TreeCursor&&) noexcept = default;
+
+    [[nodiscard]] bool is_valid() const noexcept;
+    [[nodiscard]] BlockId current() const;
+    [[nodiscard]] std::size_t position() const noexcept;
+
+    // 前進一個 Block。回傳 false 表示已在最後一個 Block，cursor 變為無效。
+    bool advance();
+    // 後退一個 Block。回傳 false 表示已在第一個 Block，cursor 保持在原位。
+    bool retreat();
+
+private:
+    struct Frame {
+        const FlowInternalNode* node;
+        std::size_t child_index;
+    };
+
+    IntrusivePtr<const FlowSequenceNode> root_;
+    std::vector<Frame> ancestors_;
+    const FlowLeafNode* leaf_ = nullptr;
+    std::size_t local_offset_ = 0;
+    std::size_t global_position_ = 0;
+};
+
 }  // namespace krepis
