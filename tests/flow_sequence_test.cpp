@@ -3,6 +3,9 @@
 
 #include "test_support.hpp"
 
+#include <atomic>
+#include <numeric>
+#include <thread>
 #include <vector>
 
 using krepis::BlockId;
@@ -449,6 +452,69 @@ void test_no_rebalance_above_low_water() {
     }
 }
 
+// --- D17 Gate 3: snapshot parallel traversal ---
+
+std::uint64_t compute_snapshot_hash(const FlowSequence& seq) {
+    std::uint64_t hash = 0;
+    for (std::size_t i = 0; i < seq.block_count(); ++i) {
+        auto id = seq.at(i);
+        hash ^= id.raw().low * (i + 1);
+    }
+    return hash;
+}
+
+void test_snapshot_parallel_traversal() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 8;
+    config.internal_fanout = 4;
+    config.merge_low_water = 3;
+
+    auto seq = FlowSequence::empty(config);
+    constexpr std::size_t initial_count = 200;
+    for (std::size_t i = 0; i < initial_count; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    const FlowSequence snapshot = seq;
+    const auto expected_hash = compute_snapshot_hash(snapshot);
+    const auto expected_count = snapshot.block_count();
+
+    std::atomic<bool> stop{false};
+    std::atomic<bool> reader_ok{true};
+
+    // Background reader: repeatedly traverse the old snapshot.
+    std::thread reader([&] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            if (compute_snapshot_hash(snapshot) != expected_hash) {
+                reader_ok.store(false, std::memory_order_relaxed);
+                return;
+            }
+            if (snapshot.block_count() != expected_count) {
+                reader_ok.store(false, std::memory_order_relaxed);
+                return;
+            }
+        }
+    });
+
+    // Main thread: continuously create new revisions via insert and remove.
+    auto current = seq;
+    for (int round = 0; round < 500; ++round) {
+        current = current.insert(0, make_block(10000 + round));
+        current = current.remove(current.block_count() - 1);
+        current = current.insert(current.block_count() / 2, make_block(20000 + round));
+        current = current.remove(0);
+    }
+
+    stop.store(true, std::memory_order_relaxed);
+    reader.join();
+
+    expect(reader_ok.load(), "D17 閘門 3：背景走訪舊 snapshot 內容 hash 不變");
+    expect(snapshot.block_count() == initial_count,
+           "D17 閘門 3：舊 snapshot block_count 不變");
+    expect(compute_snapshot_hash(snapshot) == expected_hash,
+           "D17 閘門 3：最終 hash 驗證");
+}
+
 void test_reclamation_accounting() {
     auto& queue = default_reclamation_queue();
     auto baseline = queue.total_reclaimed();
@@ -492,6 +558,8 @@ int main() {
     test_redistribute_on_underflow();
     test_repeated_delete_with_rebalance();
     test_no_rebalance_above_low_water();
+
+    test_snapshot_parallel_traversal();
 
     test_cursor_single_element();
     test_cursor_forward_traversal();
