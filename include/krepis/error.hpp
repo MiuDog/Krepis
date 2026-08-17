@@ -67,8 +67,7 @@ private:
 // 可否複製／移動：取決於 T。
 template <typename T>
 class Result {
-    static_assert(!std::is_same_v<std::decay_t<T>, Error>,
-                  "Result<Error> 會使成功與失敗無法區分");
+    static_assert(!std::is_same_v<std::decay_t<T>, Error>, "Result<Error> 會使成功與失敗無法區分");
     static_assert(!std::is_reference_v<T>, "Result 不持有參照");
 
 public:

@@ -9,12 +9,18 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
 namespace krepis {
 
 class ReclamationQueue;
+template <typename T>
+class IntrusivePtr;
+template <typename T, typename... Args>
+[[nodiscard]] IntrusivePtr<const T> make_intrusive(Args&&... args);
 
 // 具備 intrusive reference count 的節點基底。
 //
@@ -32,16 +38,6 @@ public:
     RefCounted(const RefCounted&) = delete;
     RefCounted& operator=(const RefCounted&) = delete;
 
-    void retain() const noexcept {
-        const std::uint32_t previous = count_.fetch_add(1, std::memory_order_relaxed);
-        // 從已歸零或已毒化的物件 retain，代表出現了未受保護的 raw pointer。
-        assert(previous != 0 && previous != poisoned && "從已釋放的節點 retain");
-        assert(previous < poisoned - 1 && "reference count 溢位");
-        (void)previous;
-    }
-
-    void release() const noexcept;
-
     // 僅供診斷與測試。**不得用於控制流程** —— 讀到的值在回傳當下即可能過期。
     [[nodiscard]] std::uint32_t use_count() const noexcept {
         return count_.load(std::memory_order_relaxed);
@@ -53,6 +49,18 @@ protected:
 
 private:
     friend class ReclamationQueue;
+    template <typename>
+    friend class IntrusivePtr;
+
+    void retain() const noexcept {
+        const std::uint32_t previous = count_.fetch_add(1, std::memory_order_relaxed);
+        // 從已歸零或已毒化的物件 retain，代表 ownership 封裝已被破壞。
+        assert(previous != 0 && previous != poisoned && "從已釋放的節點 retain");
+        assert(previous < poisoned - 1 && "reference count 溢位");
+        (void)previous;
+    }
+
+    void release() const noexcept;
 
     // 歸零後寫入的毒化值，使 double release 與 use-after-free 立即被 assert 攔截。
     static constexpr std::uint32_t poisoned = 0xDEAD0000u;
@@ -64,19 +72,18 @@ private:
 
 // 待回收節點的佇列。
 //
-// 責任：接收最後一次 release 交出的節點，並在 drain() 時執行銷毀。
-// 不負責：決定何時 drain —— 那由背景 reclamation worker 或關機流程決定。
+// 責任：接收最後一次 release 交出的節點，並由背景 worker 分批執行銷毀。
+// 不負責：由呼叫者銷毀節點 —— destructor 只能由內部背景 worker 執行。
 // 維持的不變條件：enqueue 不配置記憶體、不拋例外；每個節點恰好被銷毀一次。
-// 生命週期：process-wide 單例，見 default_reclamation_queue()。
-// 執行緒安全程度：enqueue 可由任意執行緒併發呼叫；**drain 必須單一執行緒**。
+// 生命週期：process-wide 單例，必須以 shutdown_default_reclamation_queue() 明確停止。
+// 執行緒安全程度：enqueue 可由任意執行緒併發呼叫；只有內部 worker 能 drain。
 class ReclamationQueue {
 public:
-    // 由最後一次 release 呼叫。noexcept 且不配置記憶體（D17）。
-    void enqueue(const RefCounted* node) noexcept;
+    ReclamationQueue(const ReclamationQueue&) = delete;
+    ReclamationQueue& operator=(const ReclamationQueue&) = delete;
 
-    // 銷毀目前佇列中的全部節點，回傳銷毀數量。
-    // **必須單一執行緒呼叫。** 關機前必須 drain，並證明配置數等於銷毀數（D17）。
-    std::size_t drain() noexcept;
+    // 等待背景 worker 銷毀目前所有 outstanding node；不停止 worker。
+    void wait_until_idle() noexcept;
 
     [[nodiscard]] std::size_t pending() const noexcept {
         return pending_.load(std::memory_order_relaxed);
@@ -87,14 +94,43 @@ public:
         return total_reclaimed_.load(std::memory_order_relaxed);
     }
 
+    [[nodiscard]] bool is_shutdown() const noexcept;
+
 private:
+    friend class RefCounted;
+    friend ReclamationQueue& default_reclamation_queue() noexcept;
+    friend void shutdown_default_reclamation_queue() noexcept;
+
+    enum class State : std::uint8_t {
+        running,
+        stopping,
+        finalizing,
+        stopped,
+    };
+
+    ReclamationQueue();
+    ~ReclamationQueue();
+
+    // 由最後一次 release 呼叫。先登記 outstanding，再以 Treiber stack 發布 node。
+    void enqueue(const RefCounted* node) noexcept;
+    [[nodiscard]] std::size_t drain_once() noexcept;
+    void worker_main() noexcept;
+    void shutdown() noexcept;
+
     std::atomic<RefCounted*> head_{nullptr};
     std::atomic<std::size_t> pending_{0};
     std::atomic<std::size_t> total_reclaimed_{0};
+    std::atomic<std::size_t> active_enqueuers_{0};
+    std::atomic<State> state_{State::running};
+    std::atomic<std::uint64_t> worker_generation_{0};
+    std::atomic<std::uint64_t> idle_generation_{0};
+    std::thread worker_;
 };
 
-// Process-wide 的預設佇列。
+// Process-wide 的預設佇列。物件刻意存活到 process 結束，避免 static destruction order 問題；
+// runtime 必須在所有外部 owner 釋放後明確 shutdown。
 [[nodiscard]] ReclamationQueue& default_reclamation_queue() noexcept;
+void shutdown_default_reclamation_queue() noexcept;
 
 // 唯一合法的 owning edge。
 //
@@ -107,15 +143,10 @@ private:
 template <typename T>
 class IntrusivePtr {
 public:
+    static_assert(std::is_const_v<T>, "owning edge 必須使用 IntrusivePtr<const T>");
+
     constexpr IntrusivePtr() noexcept = default;
     constexpr IntrusivePtr(std::nullptr_t) noexcept {}
-
-    // 接管一個計數已為 1 的新節點。**不 retain。**
-    [[nodiscard]] static IntrusivePtr adopt(T* raw) noexcept {
-        IntrusivePtr result;
-        result.pointer_ = raw;
-        return result;
-    }
 
     IntrusivePtr(const IntrusivePtr& other) noexcept : pointer_(other.pointer_) {
         if (pointer_ != nullptr) {
@@ -127,12 +158,18 @@ public:
         other.pointer_ = nullptr;
     }
 
-    // 跨型別轉換：衍生 → 基底、T → const T。只在可隱式轉換時成立。
+    // 跨型別轉換（複製）：衍生 → 基底。只在可隱式轉換時成立。
     template <typename U, typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
     IntrusivePtr(const IntrusivePtr<U>& other) noexcept : pointer_(other.get()) {
         if (pointer_ != nullptr) {
             pointer_->retain();
         }
+    }
+
+    // 跨型別轉換（搬移）：竊取計數，不做 retain／release。
+    template <typename U, typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
+    IntrusivePtr(IntrusivePtr<U>&& other) noexcept : pointer_(other.pointer_) {
+        other.pointer_ = nullptr;
     }
 
     IntrusivePtr& operator=(const IntrusivePtr& other) noexcept {
@@ -191,13 +228,27 @@ public:
     }
 
 private:
+    template <typename>
+    friend class IntrusivePtr;
+
+    template <typename U, typename... Args>
+    friend IntrusivePtr<const U> make_intrusive(Args&&... args);
+
+    struct AdoptInitialReference {};
+
+    explicit IntrusivePtr(T* raw, AdoptInitialReference) noexcept : pointer_(raw) {}
+
     T* pointer_ = nullptr;
 };
 
-// 建立節點並接管其初始計數。
+// 唯一公開的初始 owner 建立路徑：建構完整 immutable node，並只發布 const owning pointer。
 template <typename T, typename... Args>
-[[nodiscard]] IntrusivePtr<T> make_intrusive(Args&&... args) {
-    return IntrusivePtr<T>::adopt(new T(std::forward<Args>(args)...));
+[[nodiscard]] IntrusivePtr<const T> make_intrusive(Args&&... args) {
+    static_assert(!std::is_const_v<T>, "factory 的 T 不需包含 const");
+    static_assert(std::is_base_of_v<RefCounted, T>, "factory 只能建立 RefCounted 衍生型別");
+
+    using Pointer = IntrusivePtr<const T>;
+    return Pointer(new T(std::forward<Args>(args)...), typename Pointer::AdoptInitialReference{});
 }
 
 }  // namespace krepis

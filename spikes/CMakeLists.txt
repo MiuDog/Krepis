@@ -75,6 +75,18 @@ if(MSVC)
     target_compile_options(spike2_scaling_test PRIVATE /utf-8 /W4 /permissive-)
 endif()
 
+# Spike 4: IntrusivePtr vs std::shared_ptr benchmark（LAY-0002 D17 gate 6）
+add_executable(spike4_intrusive_vs_shared
+    spike4_intrusive_vs_shared/spike4_benchmark.cpp
+)
+
+target_link_libraries(spike4_intrusive_vs_shared PRIVATE krepis::krepis)
+
+target_compile_features(spike4_intrusive_vs_shared PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(spike4_intrusive_vs_shared PRIVATE /utf-8 /W4 /permissive-)
+endif()
+
 # Spike 3: Submission Boundary Evaluation
 add_executable(spike3_submission_boundary
     spike3_submission_boundary/spike3_main.cpp

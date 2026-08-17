@@ -19,8 +19,7 @@ namespace {
 }
 
 // 回傳在 base + used 之後、對齊到 alignment 的位址所需的填補位元組數。
-[[nodiscard]] std::size_t padding_for(const std::uint8_t* base, std::size_t used,
-                                      std::size_t alignment) noexcept {
+[[nodiscard]] std::size_t padding_for(const std::uint8_t* base, std::size_t used, std::size_t alignment) noexcept {
     const std::uintptr_t cursor = reinterpret_cast<std::uintptr_t>(base) + used;
     const std::uintptr_t mask = static_cast<std::uintptr_t>(alignment) - 1;
     const std::uintptr_t aligned = (cursor + mask) & ~mask;
