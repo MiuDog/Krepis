@@ -33,6 +33,9 @@ add_test(NAME krepis.leaf_key COMMAND krepis_leaf_key_test)
 krepis_add_test(krepis_intrusive_ptr_test intrusive_ptr_test.cpp)
 add_test(NAME krepis.intrusive_ptr COMMAND krepis_intrusive_ptr_test)
 
+krepis_add_test(krepis_location_index_test location_index_test.cpp)
+add_test(NAME krepis.location_index COMMAND krepis_location_index_test)
+
 krepis_add_test(krepis_flow_layout_index_test flow_layout_index_test.cpp)
 add_test(NAME krepis.flow_layout_index COMMAND krepis_flow_layout_index_test)
 
