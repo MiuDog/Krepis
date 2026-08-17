@@ -33,7 +33,9 @@ add_library(krepis::krepis ALIAS krepis)
 
 target_sources(krepis PRIVATE
     src/arena.cpp
+    src/document_revision.cpp
     src/flow_layout_index.cpp
+    src/object_store.cpp
     src/location_index.cpp
     src/flow_sequence.cpp
     src/id_generator.cpp
