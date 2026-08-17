@@ -6,6 +6,8 @@ project(krepis
     LANGUAGES CXX
 )
 
+find_package(Threads REQUIRED)
+
 # 本專案為基座庫，可被其他專案 add_subdirectory 引入；只有作為頂層專案時才建置測試。
 if(PROJECT_IS_TOP_LEVEL)
     set(KREPIS_BUILD_TESTS_DEFAULT ON)
@@ -31,6 +33,7 @@ add_library(krepis::krepis ALIAS krepis)
 
 target_sources(krepis PRIVATE
     src/arena.cpp
+    src/flow_sequence.cpp
     src/id_generator.cpp
     src/leaf_key.cpp
     src/object_id.cpp
@@ -44,6 +47,7 @@ target_include_directories(krepis PUBLIC
 )
 
 target_compile_features(krepis PUBLIC cxx_std_20)
+target_link_libraries(krepis PUBLIC Threads::Threads)
 
 if(MSVC)
     # /W4 為警告基線；/permissive- 關閉 MSVC 的寬鬆一致性模式，避免寫出不可攜的程式碼。
