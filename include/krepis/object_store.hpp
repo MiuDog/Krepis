@@ -11,6 +11,7 @@
 
 #include "krepis/intrusive_ptr.hpp"
 #include "krepis/object_id.hpp"
+#include "krepis/object_slot.hpp"
 
 #include <cassert>
 #include <cstddef>
@@ -20,28 +21,8 @@
 
 namespace krepis {
 
-// Authority 內部的緊湊索引。**不得序列化、不得外流給 client**——
-// 它會因 compact 而改變，只有 ObjectId 是持久身分。
-struct ObjectSlot {
-    static constexpr std::uint32_t invalid_value = 0xFFFFFFFFu;
-
-    std::uint32_t value = invalid_value;
-
-    [[nodiscard]] constexpr bool is_valid() const noexcept { return value != invalid_value; }
-
-    friend constexpr bool operator==(const ObjectSlot&, const ObjectSlot&) noexcept = default;
-};
-
-inline constexpr ObjectSlot invalid_object_slot{};
-
-// Slot 配置的世代。compact 重新配置 slot 時遞增；
-// 持有 slot 的 cache 必須核對世代（LAY-0002 D18 的 storage_generation）。
-struct IdDirectoryGeneration {
-    std::uint64_t value = 0;
-
-    friend constexpr bool operator==(const IdDirectoryGeneration&,
-                                     const IdDirectoryGeneration&) noexcept = default;
-};
+// ObjectSlot 與 IdDirectoryGeneration 定義於 object_slot.hpp——
+// LocationIndex 也以 ObjectSlot 為索引鍵（D14），兩者必須共用同一個型別。
 
 // 所有可儲存物件的基底。發布後不可變（D8）。
 //

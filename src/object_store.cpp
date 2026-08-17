@@ -107,10 +107,11 @@ SlotAddress address_of(ObjectSlot slot) noexcept {
     return {slot.value / RecordPage::page_capacity, slot.value % RecordPage::page_capacity};
 }
 
+// depth 層的樹中，**單一 child** 涵蓋多少個 page。採飽和運算避免溢位迴繞。
 std::size_t page_span_for_depth(std::size_t depth) noexcept {
     std::size_t span = 1;
     for (std::size_t i = 1; i < depth; ++i) {
-        span *= RecordPageTableNode::fanout;
+        span = saturating_mul(span, RecordPageTableNode::fanout);
     }
     return span;
 }
@@ -267,7 +268,8 @@ std::size_t ObjectStoreSnapshot::capacity() const noexcept {
     if (depth_ == 0) {
         return 0;
     }
-    return page_span_for_depth(depth_ + 1) * RecordPage::page_capacity;
+    // 與 LocationIndex 同樣採飽和運算：迴繞後的 `64^11 = 2^66` 恰好為 0（閘門 7／E1 第二輪）。
+    return saturating_mul(page_span_for_depth(depth_ + 1), RecordPage::page_capacity);
 }
 
 }  // namespace krepis

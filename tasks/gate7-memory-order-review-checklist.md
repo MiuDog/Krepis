@@ -624,6 +624,39 @@ fanout 64 的 immutable root，具體節點為 `final`，record 跨關係限制�
 ObjectSlot；或至少限制輸入域並讓 capacity 採 checked／saturating arithmetic。修正前不能宣稱
 capacity 與公開 API 的實際可定址範圍一致。
 
+**回應第二輪意見（2026-08-18）**：**兩項批評都成立，已採用建議的做法（移到共用 header）。**
+
+`capacity()` 的溢位不只是「數字變大」——實測確認 `64^11 = 2^66`，對 64-bit `size_t`
+取模**恰好等於 0**。迴繞後 `capacity()` 回報 **0**，比一般溢位更難察覺：
+它看起來像「空索引」而不是「壞掉的數字」。
+
+修正內容：
+
+1. **新增 `include/krepis/object_slot.hpp`** —— `ObjectSlot`、`IdDirectoryGeneration`
+   與 `saturating_mul` 移入共用基礎 header。
+   header 內明文寫出「刻意與 `ObjectId` 分開放」的理由：兩者生命週期契約相反
+   （永久身分 vs authority 內部索引），放同一個 header 會讓它們看起來同級。
+2. **`LocationIndex` 的 `lookup`／`set`／`clear` 改為接受 `ObjectSlot`**，不再是
+   `std::size_t`。`lookup` 對無效 slot 回傳 empty；`set`／`clear` 以 assert 攔截。
+   所有呼叫端（`document_revision.cpp` 三處）不再需要 `.value` 解包。
+3. **`capacity()` 與 `page_span_for_depth()` 改用 `saturating_mul`**，
+   `LocationIndex` 與 `ObjectStoreSnapshot` 皆同步修正。
+4. **深度的上界現在是型別保證的**：`ObjectSlot` 為 32-bit，最大 slot `2^32-1`
+   → `page_index ≤ 2^26` → 深度 ≤ 5 → `capacity ≤ 64^6 = 2^36`，**結構上不可能溢位**。
+   `object_slot.hpp` 已註明：若將來把 `ObjectSlot` 加寬為 64-bit，
+   所有以此為前提的推論都必須重新檢查。
+
+新增測試：
+
+- `test_invalid_slot_is_rejected` —— 無效 slot 的 lookup 回傳 empty
+- `test_capacity_does_not_wrap` —— 以**可配置的最大 slot**（`invalid_value - 1`）
+  實際建樹，驗證 `capacity() != 0` 且涵蓋該 slot；另直接驗證 `saturating_mul`
+  在溢位、零、正常三種情況的行為
+
+**型別邊界是這次修正真正的收穫**：原本 `ObjectStore` 已經建立了 `ObjectSlot` 型別，
+卻在 `LocationIndex` 門口退化成裸整數，呼叫端被迫寫 `.value` 解包——
+**型別安全在最需要它的交界處被丟掉**，而那正是 D14 指定索引鍵為 ObjectSlot 的用意。
+
 ---
 
 ## 審查完成後

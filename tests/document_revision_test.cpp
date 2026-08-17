@@ -258,7 +258,7 @@ void test_flow_root_populates_location_index() {
             all_located = false;
             break;
         }
-        const auto entry = rev.locations().lookup(slot.value);
+        const auto entry = rev.locations().lookup(slot);
         if (!entry.is_flow() || entry.owner != container) {
             all_located = false;
             break;

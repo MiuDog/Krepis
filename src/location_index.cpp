@@ -56,10 +56,11 @@ std::span<const IntrusivePtr<const PageTableNode>> PageTableNode::children() con
 namespace {
 
 // depth 層的樹能容納多少個 page。
+// depth 層的樹中，**單一 child** 涵蓋多少個 page。採飽和運算避免溢位迴繞。
 std::size_t page_span_for_depth(std::size_t depth) noexcept {
     std::size_t span = 1;
     for (std::size_t i = 1; i < depth; ++i) {
-        span *= PageTableNode::fanout;
+        span = saturating_mul(span, PageTableNode::fanout);
     }
     return span;
 }
@@ -145,12 +146,13 @@ LocationIndex LocationIndex::empty() {
     return LocationIndex(nullptr, 0);
 }
 
-LocationEntry LocationIndex::lookup(std::size_t slot) const {
-    if (!root_) {
+LocationEntry LocationIndex::lookup(ObjectSlot slot) const {
+    if (!root_ || !slot.is_valid()) {
         return {};
     }
-    const std::size_t page_index = slot / LocationPage::page_capacity;
-    const std::size_t offset = slot % LocationPage::page_capacity;
+    const std::size_t index = slot.value;
+    const std::size_t page_index = index / LocationPage::page_capacity;
+    const std::size_t offset = index % LocationPage::page_capacity;
 
     const LocationPage* page = find_page(root_.get(), depth_, page_index);
     if (page == nullptr) {
@@ -163,9 +165,11 @@ LocationEntry LocationIndex::lookup(std::size_t slot) const {
     return entries[offset];
 }
 
-LocationIndex LocationIndex::set(std::size_t slot, LocationEntry entry) const {
-    const std::size_t page_index = slot / LocationPage::page_capacity;
-    const std::size_t offset = slot % LocationPage::page_capacity;
+LocationIndex LocationIndex::set(ObjectSlot slot, LocationEntry entry) const {
+    assert(slot.is_valid() && "不得對無效 slot 寫入位置資訊");
+    const std::size_t index = slot.value;
+    const std::size_t page_index = index / LocationPage::page_capacity;
+    const std::size_t offset = index % LocationPage::page_capacity;
 
     // 先把樹長高到足以容納 page_index。
     //
@@ -187,7 +191,7 @@ LocationIndex LocationIndex::set(std::size_t slot, LocationEntry entry) const {
     return LocationIndex(std::move(new_root), depth);
 }
 
-LocationIndex LocationIndex::clear(std::size_t slot) const {
+LocationIndex LocationIndex::clear(ObjectSlot slot) const {
     return set(slot, LocationEntry{});
 }
 
@@ -195,7 +199,10 @@ std::size_t LocationIndex::capacity() const noexcept {
     if (depth_ == 0) {
         return 0;
     }
-    return page_span_for_depth(depth_ + 1) * LocationPage::page_capacity;
+    // `fanout^depth_ * page_capacity`。深度夠深時會超出 size_t，
+    // 而 `64^11 = 2^66` 對 64-bit size_t 取模**恰好為 0**——
+    // 迴繞會讓 capacity() 回報 0，比溢位更難察覺（閘門 7／E1 第二輪）。
+    return saturating_mul(page_span_for_depth(depth_ + 1), LocationPage::page_capacity);
 }
 
 }  // namespace krepis

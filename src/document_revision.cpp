@@ -68,7 +68,7 @@ DocumentRevision DocumentRevision::with_deleted_object(BlockId block) const {
     // Tombstone 保留在 slot 上；directory 不移除映射，
     // 因為 slot 在同一世代內不得重用（D10）。
     auto new_store = store_.with_tombstone(slot);
-    auto new_locations = locations_.clear(slot.value);
+    auto new_locations = locations_.clear(slot);
 
     return DocumentRevision(next_content_revision(), directory_, std::move(new_store),
                             std::move(new_locations), flow_roots_);
@@ -89,7 +89,7 @@ DocumentRevision DocumentRevision::with_flow_root(ContainerId container,
         new_directory = std::move(allocated.directory);
 
         new_locations =
-            new_locations.set(allocated.slot.value, make_flow_location(container, leaf_key));
+            new_locations.set(allocated.slot, make_flow_location(container, leaf_key));
     }
 
     auto new_roots = flow_roots_;
@@ -125,7 +125,7 @@ RevisionValidation DocumentRevision::validate() const {
                 return {RevisionValidation::Failure::unresolved_block_id, block, container};
             }
 
-            const auto entry = locations_.lookup(slot.value);
+            const auto entry = locations_.lookup(slot);
             if (entry.is_empty()) {
                 return {RevisionValidation::Failure::missing_location_entry, block, container};
             }

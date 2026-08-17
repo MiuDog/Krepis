@@ -10,6 +10,7 @@
 #include "krepis/intrusive_ptr.hpp"
 #include "krepis/leaf_key.hpp"
 #include "krepis/object_id.hpp"
+#include "krepis/object_slot.hpp"
 
 #include <cassert>
 #include <cstddef>
@@ -98,15 +99,24 @@ class LocationIndex {
 public:
     [[nodiscard]] static LocationIndex empty();
 
-    // 回傳 slot 的 entry。slot 超出範圍時回傳 empty entry。
-    [[nodiscard]] LocationEntry lookup(std::size_t slot) const;
+    // 索引鍵是 **ObjectSlot**（D14），不是裸整數。
+    //
+    // 先前的介面接受任意 `std::size_t`，等於把 ObjectStore 已建立的型別邊界
+    // 在 LocationIndex 門口丟掉——呼叫端必須寫 `slot.value` 解包，
+    // 而任何整數都能通過（閘門 7／E1 第二輪）。
+
+    // 回傳 slot 的 entry。slot 無效或未配置時回傳 empty entry。
+    [[nodiscard]] LocationEntry lookup(ObjectSlot slot) const;
 
     // 設定 slot 的 entry。自動擴展容量，且只複製 root 到該 page 的路徑。
-    [[nodiscard]] LocationIndex set(std::size_t slot, LocationEntry entry) const;
+    // 前置條件：slot 有效。
+    [[nodiscard]] LocationIndex set(ObjectSlot slot, LocationEntry entry) const;
 
-    // 清除 slot 的 entry（設為 empty）。
-    [[nodiscard]] LocationIndex clear(std::size_t slot) const;
+    // 清除 slot 的 entry（設為 empty）。前置條件：slot 有效。
+    [[nodiscard]] LocationIndex clear(ObjectSlot slot) const;
 
+    // 目前可定址的 slot 數。採飽和運算——深度夠深時 `fanout^(depth+1)` 會超出 size_t，
+    // 而迴繞後**恰好等於 0**，比溢位更難察覺。
     [[nodiscard]] std::size_t capacity() const noexcept;
 
 private:
