@@ -128,8 +128,62 @@ InsertResult insert_into(const FlowSequenceNode* node, std::size_t position,
     return split_children(std::move(new_children));
 }
 
+bool is_underflowed_leaf(const FlowSequenceNode* node, const FlowSequenceConfig& config) {
+    return node->is_leaf() && node->block_count() < config.merge_low_water;
+}
+
+void rebalance_children(std::vector<ChildEntry>& children, const FlowSequenceConfig& config) {
+    if (config.merge_low_water == 0) {
+        return;
+    }
+    bool merged = true;
+    while (merged) {
+        merged = false;
+        for (std::size_t i = 0; i < children.size(); ++i) {
+            if (!is_underflowed_leaf(children[i].child.get(), config)) {
+                continue;
+            }
+            if (children.size() < 2) {
+                break;
+            }
+            std::size_t sibling_idx = (i + 1 < children.size()) ? i + 1 : i - 1;
+            if (!children[sibling_idx].child->is_leaf()) {
+                continue;
+            }
+
+            std::size_t first = (i < sibling_idx) ? i : sibling_idx;
+            std::size_t second = (i < sibling_idx) ? sibling_idx : i;
+            const auto* left_src = static_cast<const FlowLeafNode*>(children[first].child.get());
+            const auto* right_src = static_cast<const FlowLeafNode*>(children[second].child.get());
+
+            std::vector<BlockId> combined;
+            auto total = left_src->block_count() + right_src->block_count();
+            combined.reserve(total);
+            combined.insert(combined.end(), left_src->blocks().begin(), left_src->blocks().end());
+            combined.insert(combined.end(), right_src->blocks().begin(), right_src->blocks().end());
+
+            if (total <= config.leaf_capacity) {
+                auto merged_count = combined.size();
+                children[first] = {make_intrusive<FlowLeafNode>(std::move(combined)), merged_count};
+                children.erase(children.begin() + static_cast<std::ptrdiff_t>(second));
+                merged = true;
+                break;
+            }
+            // Redistribute evenly. Don't restart — this is the best split possible.
+            auto mid = static_cast<std::ptrdiff_t>(total / 2);
+            auto left_blocks = std::vector<BlockId>(combined.begin(), combined.begin() + mid);
+            auto right_blocks = std::vector<BlockId>(combined.begin() + mid, combined.end());
+            auto left_count = left_blocks.size();
+            auto right_count = right_blocks.size();
+            children[first] = {make_intrusive<FlowLeafNode>(std::move(left_blocks)), left_count};
+            children[second] = {make_intrusive<FlowLeafNode>(std::move(right_blocks)), right_count};
+        }
+    }
+}
+
 IntrusivePtr<const FlowSequenceNode> remove_from(const FlowSequenceNode* node,
-                                                  std::size_t position) {
+                                                  std::size_t position,
+                                                  const FlowSequenceConfig& config) {
     if (node->is_leaf()) {
         const auto* leaf = static_cast<const FlowLeafNode*>(node);
         auto blocks = std::vector<BlockId>(leaf->blocks().begin(), leaf->blocks().end());
@@ -148,7 +202,7 @@ IntrusivePtr<const FlowSequenceNode> remove_from(const FlowSequenceNode* node,
     std::size_t remaining = position;
     std::size_t child_idx = find_child_for_position(children, remaining);
 
-    auto new_child = remove_from(children[child_idx].child.get(), remaining);
+    auto new_child = remove_from(children[child_idx].child.get(), remaining, config);
 
     std::vector<ChildEntry> new_children;
     new_children.reserve(children.size());
@@ -166,6 +220,13 @@ IntrusivePtr<const FlowSequenceNode> remove_from(const FlowSequenceNode* node,
     if (new_children.empty()) {
         return nullptr;
     }
+    if (new_children.size() == 1) {
+        return std::move(new_children[0].child);
+    }
+
+    // D16: rebalance underflowed leaf children.
+    rebalance_children(new_children, config);
+
     if (new_children.size() == 1) {
         return std::move(new_children[0].child);
     }
@@ -240,7 +301,7 @@ FlowSequence FlowSequence::insert(std::size_t position, BlockId block_id) const 
 
 FlowSequence FlowSequence::remove(std::size_t position) const {
     assert(root_ && position < block_count());
-    auto new_root = remove_from(root_.get(), position);
+    auto new_root = remove_from(root_.get(), position, config_);
     return FlowSequence(config_, std::move(new_root));
 }
 

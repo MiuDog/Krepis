@@ -356,6 +356,99 @@ void test_cursor_bidirectional() {
     expect(!cursor.advance(), "再 advance 到終點");
 }
 
+// --- D16: Merge/Redistribution tests ---
+
+void test_merge_on_underflow() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 8;
+    config.internal_fanout = 4;
+    config.merge_low_water = 3;
+
+    auto seq = FlowSequence::empty(config);
+    for (std::size_t i = 0; i < 9; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+    // After 9 inserts with capacity 8: split into two leaves (4+5).
+    // Now remove from the smaller leaf until it drops below low_water (3).
+    // Remove block at position 0 three times -> leaf goes from 4 to 1, below low_water=3.
+    seq = seq.remove(0);  // leaf: 3 blocks (still >= low_water)
+    seq = seq.remove(0);  // leaf: 2 blocks (< low_water=3) -> merge/redistribute
+
+    expect(seq.block_count() == 7, "merge 後 count 正確");
+    bool all_correct = true;
+    for (std::size_t i = 0; i < 7; ++i) {
+        if (seq.at(i) != make_block(i + 3)) {
+            all_correct = false;
+            break;
+        }
+    }
+    expect(all_correct, "merge 後所有位置正確");
+}
+
+void test_redistribute_on_underflow() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 8;
+    config.internal_fanout = 4;
+    config.merge_low_water = 3;
+
+    auto seq = FlowSequence::empty(config);
+    for (std::size_t i = 0; i < 14; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+    // 14 blocks, capacity 8: split produces leaves. Remove enough from front
+    // to trigger underflow, but total with sibling exceeds capacity -> redistribute.
+    for (int i = 0; i < 5; ++i) {
+        seq = seq.remove(0);
+    }
+
+    expect(seq.block_count() == 9, "redistribute 後 count 正確");
+    bool all_correct = true;
+    for (std::size_t i = 0; i < 9; ++i) {
+        if (seq.at(i) != make_block(i + 6)) {
+            all_correct = false;
+            break;
+        }
+    }
+    expect(all_correct, "redistribute 後所有位置正確");
+}
+
+void test_repeated_delete_with_rebalance() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+    config.merge_low_water = 2;
+
+    auto seq = FlowSequence::empty(config);
+    for (std::size_t i = 0; i < 30; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    // Remove all from front, one by one. Tests merge cascading up.
+    for (std::size_t i = 30; i > 0; --i) {
+        expect(seq.block_count() == i, "逐一刪除中 count 正確");
+        seq = seq.remove(0);
+    }
+    expect(seq.is_empty(), "全部刪除後為空");
+}
+
+void test_no_rebalance_above_low_water() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+    config.merge_low_water = 2;
+
+    auto seq = FlowSequence::empty(config);
+    for (std::size_t i = 0; i < 5; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+    // Split into 2+3. Remove one from the 3-leaf -> 2+2. Both >= low_water.
+    seq = seq.remove(4);  // remove last -> leaves should be 2+2
+    expect(seq.block_count() == 4, "刪除後 count == 4");
+    for (std::size_t i = 0; i < 4; ++i) {
+        expect(seq.at(i) == make_block(i + 1), "高於 low_water 不重平衡，順序不變");
+    }
+}
+
 void test_reclamation_accounting() {
     auto& queue = default_reclamation_queue();
     auto baseline = queue.total_reclaimed();
@@ -394,6 +487,11 @@ int main() {
     test_interleaved_insert_remove();
     test_large_sequence();
     test_reclamation_accounting();
+
+    test_merge_on_underflow();
+    test_redistribute_on_underflow();
+    test_repeated_delete_with_rebalance();
+    test_no_rebalance_above_low_water();
 
     test_cursor_single_element();
     test_cursor_forward_traversal();
