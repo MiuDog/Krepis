@@ -51,6 +51,21 @@ public:
     explicit DerivedNode(int value) noexcept : Node(value) {}
 };
 
+// 惡意衍生型別：宣告同名 public retain／release，試圖以 name hiding 遮蔽
+// RefCounted 的唯一計數實作（閘門 7／A1）。
+std::atomic<int> hostile_retain_calls{0};
+std::atomic<int> hostile_release_calls{0};
+
+class HostileNode final : public RefCounted {
+public:
+    HostileNode() noexcept { live_nodes.fetch_add(1); }
+    ~HostileNode() override { live_nodes.fetch_sub(1); }
+
+    // 這兩個**不得**被 IntrusivePtr 呼叫到。
+    void retain() const noexcept { hostile_retain_calls.fetch_add(1); }
+    void release() const noexcept { hostile_release_calls.fetch_add(1); }
+};
+
 template <typename T>
 concept HasPublicRetain = requires(const T& value) { value.retain(); };
 
@@ -60,9 +75,18 @@ concept HasPublicRelease = requires(const T& value) { value.release(); };
 template <typename T>
 concept HasPublicAdopt = requires(const T* value) { IntrusivePtr<const T>::adopt(value); };
 
+// 閘門 7／A1：raw pointer 不得能建構出 IntrusivePtr。
+template <typename T>
+concept ConstructibleFromRaw = requires(const T* raw) { IntrusivePtr<const T>(raw); };
+
+template <typename T>
+concept ConstructibleFromMutableRaw = requires(T* raw) { IntrusivePtr<const T>(raw); };
+
 static_assert(!HasPublicRetain<Node>, "retain 必須由 IntrusivePtr 私下呼叫");
 static_assert(!HasPublicRelease<Node>, "release 必須由 IntrusivePtr 私下呼叫");
 static_assert(!HasPublicAdopt<Node>, "raw pointer adopt path 不得公開");
+static_assert(!ConstructibleFromRaw<Node>, "不得由 const raw pointer 建構 owning edge");
+static_assert(!ConstructibleFromMutableRaw<Node>, "不得由 raw pointer 建構 owning edge");
 static_assert(std::is_same_v<decltype(make_intrusive<Node>(1)), IntrusivePtr<const Node>>,
               "factory 必須只發布 const owning pointer");
 
@@ -241,8 +265,39 @@ void test_allocation_matches_reclamation() {
            "回收數等於配置數");
 }
 
-// D17：關機只發出停止要求並 join worker；呼叫者不得直接執行 destructor。
-void test_shutdown_drains_and_joins_worker() {
+// 閘門 7／A1：衍生型別以同名 public 成員遮蔽計數實作時，
+// IntrusivePtr 必須仍走 RefCounted 的唯一實作。
+void test_derived_type_cannot_shadow_counter() {
+    wait_until_reclaimed();
+    const int before = live_nodes.load();
+    hostile_retain_calls.store(0);
+    hostile_release_calls.store(0);
+
+    {
+        auto node = make_intrusive<HostileNode>();
+        expect(node->use_count() == 1, "惡意衍生型別的初始計數仍為 1");
+
+        IntrusivePtr<const HostileNode> copy = node;
+        expect(node->use_count() == 2, "複製走的是 RefCounted 的計數，不是被遮蔽的成員");
+
+        // 透過基底指標持有也必須一致。
+        IntrusivePtr<const RefCounted> base = node;
+        expect(node->use_count() == 3, "轉為基底 owning edge 後計數為 3");
+    }
+
+    wait_until_reclaimed();
+    expect(hostile_retain_calls.load() == 0, "被遮蔽的 retain 從未被呼叫");
+    expect(hostile_release_calls.load() == 0, "被遮蔽的 release 從未被呼叫");
+    expect(live_nodes.load() == before, "惡意衍生型別仍被正確回收一次");
+}
+
+// D17 ＋ 閘門 7／C3：關機是**併發冪等的冷路徑**。
+//
+// 多個執行緒同時呼叫 shutdown 時：第一個執行完整流程（停止、drain、join），
+// 其餘等待同一次完整結果。修正前的實作會讓非首位呼叫者 terminate()。
+//
+// 本測試必須是最後一個——之後 queue 不再接受 enqueue。
+void test_concurrent_shutdown_is_idempotent() {
     wait_until_reclaimed();
     const int before = live_nodes.load();
 
@@ -251,10 +306,29 @@ void test_shutdown_drains_and_joins_worker() {
         (void)node;
     }
 
-    shutdown_default_reclamation_queue();
+    constexpr int caller_count = 8;
+    std::vector<std::thread> callers;
+    callers.reserve(caller_count);
+    std::atomic<int> returned{0};
+
+    for (int i = 0; i < caller_count; ++i) {
+        callers.emplace_back([&returned] {
+            shutdown_default_reclamation_queue();
+            returned.fetch_add(1);
+        });
+    }
+    for (std::thread& caller : callers) {
+        caller.join();
+    }
+
+    expect(returned.load() == caller_count, "所有併發 shutdown 呼叫者都正常返回");
     expect(default_reclamation_queue().is_shutdown(), "reclamation queue 進入 Stopped");
     expect(default_reclamation_queue().pending() == 0, "shutdown 完成後沒有 outstanding node");
     expect(live_nodes.load() == before, "shutdown 已完成所有背景銷毀");
+
+    // 關機後再呼叫仍須安靜返回（冪等）。
+    shutdown_default_reclamation_queue();
+    expect(default_reclamation_queue().is_shutdown(), "重複 shutdown 仍為 Stopped");
 }
 
 // LAY-0002 D18：持有內部 handle 的工作必須核對完整 SnapshotId。
@@ -282,7 +356,8 @@ int main() {
     test_concurrent_retain_release();
     test_concurrent_enqueue_and_background_drain();
     test_allocation_matches_reclamation();
+    test_derived_type_cannot_shadow_counter();
     test_snapshot_id_axes();
-    test_shutdown_drains_and_joins_worker();
+    test_concurrent_shutdown_is_idempotent();
     return krepis_test::report("krepis.intrusive_ptr");
 }

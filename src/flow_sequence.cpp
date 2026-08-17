@@ -178,8 +178,17 @@ void rebalance_children(std::vector<ChildEntry>& children, const FlowSequenceCon
 
             std::size_t first = (i < sibling_idx) ? i : sibling_idx;
             std::size_t second = (i < sibling_idx) ? sibling_idx : i;
-            const auto* left_src = static_cast<const FlowLeafNode*>(children[first].child.get());
-            const auto* right_src = static_cast<const FlowLeafNode*>(children[second].child.get());
+
+            // **Owner pin**（閘門 7／D2）：先複製 owning pointer 到區域變數，
+            // 再從它取 raw pointer。稍後覆寫 children[first]／children[second] 時，
+            // 舊節點仍由這兩個 pin 保活，因此重排順序不可能造成 use-after-free。
+            //
+            // 原本的寫法（直接從 children[] 取 raw pointer）**目前也正確**，
+            // 但那是依賴敘述順序的脆弱保證——改動很容易破壞它而不留痕跡。
+            const IntrusivePtr<const FlowSequenceNode> left_pin = children[first].child;
+            const IntrusivePtr<const FlowSequenceNode> right_pin = children[second].child;
+            const auto* left_src = static_cast<const FlowLeafNode*>(left_pin.get());
+            const auto* right_src = static_cast<const FlowLeafNode*>(right_pin.get());
 
             std::vector<BlockId> combined;
             auto total = left_src->block_count() + right_src->block_count();

@@ -114,6 +114,57 @@ void test_many_slots() {
     expect(all_correct, "200 個 slot 全部正確");
 }
 
+// 閘門 7／E1：page-table 必須在 slot 超出當前深度時長高，且舊子樹完全共享。
+// fanout=64、page_capacity=64 → 深度 1 只容納 4,096 個 slot。
+void test_page_table_grows_beyond_one_level() {
+    auto idx = LocationIndex::empty();
+
+    // 深度 1 的最後一個 slot。
+    const std::size_t shallow = 4095;
+    // 需要深度 2。
+    const std::size_t deep = 10000;
+    // 需要深度 3。
+    const std::size_t deeper = 300000;
+
+    idx = idx.set(shallow, make_flow_location(make_container(1), LeafKey{1, 0}));
+    expect(idx.lookup(shallow).owner == make_container(1), "深度 1 邊界 slot 正確");
+
+    idx = idx.set(deep, make_flow_location(make_container(2), LeafKey{2, 0}));
+    expect(idx.lookup(deep).owner == make_container(2), "長高後新 slot 正確");
+    expect(idx.lookup(shallow).owner == make_container(1), "長高後舊 slot 仍可讀");
+
+    idx = idx.set(deeper, make_flow_location(make_container(3), LeafKey{3, 0}));
+    expect(idx.lookup(deeper).owner == make_container(3), "再次長高後新 slot 正確");
+    expect(idx.lookup(shallow).owner == make_container(1), "兩次長高後最舊 slot 仍可讀");
+    expect(idx.lookup(deep).owner == make_container(2), "兩次長高後中間 slot 仍可讀");
+
+    expect(idx.lookup(deep + 1).is_empty(), "未設定的鄰近 slot 仍為 empty");
+    expect(idx.capacity() > deeper, "capacity 涵蓋最深的 slot");
+}
+
+// 閘門 7／E1：更新單一 slot 不得影響舊版本（短路徑 COW）。
+void test_deep_tree_cow_isolation() {
+    auto base = LocationIndex::empty();
+    for (std::size_t i = 0; i < 20; ++i) {
+        base = base.set(i * 1000, make_flow_location(make_container(i + 1), LeafKey{i, 0}));
+    }
+
+    auto updated = base.set(5000, make_flow_location(make_container(999), LeafKey{99, 0}));
+
+    expect(base.lookup(5000).owner == make_container(6), "舊版本不受更新影響");
+    expect(updated.lookup(5000).owner == make_container(999), "新版本已更新");
+
+    bool others_intact = true;
+    for (std::size_t i = 0; i < 20; ++i) {
+        if (i * 1000 == 5000) continue;
+        if (updated.lookup(i * 1000).owner != make_container(i + 1)) {
+            others_intact = false;
+            break;
+        }
+    }
+    expect(others_intact, "未改動的 slot 在新版本中完全一致");
+}
+
 void test_overwrite() {
     auto idx = LocationIndex::empty()
         .set(5, make_flow_location(make_container(1), LeafKey{1, 0}))
@@ -132,6 +183,8 @@ int main() {
     test_cow_page_sharing();
     test_cross_page_slots();
     test_many_slots();
+    test_page_table_grows_beyond_one_level();
+    test_deep_tree_cow_isolation();
     test_overwrite();
 
     shutdown_default_reclamation_queue();

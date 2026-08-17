@@ -49,6 +49,15 @@ struct IdDirectoryGeneration {
 // 不負責：定義具體 schema —— 那屬於 DOC 決策，不在儲存層。
 // 生命週期：由 IntrusivePtr<const ObjectRecord> 持有。
 // 執行緒安全程度：不可變，可跨執行緒共享。
+//
+// **owning edge 限制（閘門 7／E1）**：這是本庫少數刻意可擴充的 RefCounted 型別。
+// 衍生的具體 record **不得以 IntrusivePtr 持有其他 record**——
+// 跨記錄的關係一律以穩定 ID（ObjectId／BlockId）表達，由 ObjectStore 解析。
+//
+// 理由：D17 保證無循環的論證是「owning edge 只向下形成 DAG，且 bottom-up 建構」，
+// 那對樹狀節點成立，但**記錄之間的關係是圖，不是樹**。若允許 record 直接持有 record，
+// A→B→A 就會形成 reclamation queue 永遠回收不掉的循環，而且沒有任何診斷會報錯。
+// 以 ID 表達關係使循環變成資料問題（可驗證、可修復），而不是記憶體洩漏。
 class ObjectRecord : public RefCounted {
 public:
     [[nodiscard]] std::uint64_t content_revision() const noexcept { return content_revision_; }
@@ -75,7 +84,7 @@ private:
 // D10 允許改為 authority 獨有的 append-only 共享結構——
 // 舊 snapshot 即使解析到新 slot，也會因自己的 page table 沒有該記錄而得到 NotFound。
 // **在有量測證據之前不做這個最佳化。**
-class IdDirectory : public RefCounted {
+class IdDirectory final : public RefCounted {
 public:
     [[nodiscard]] static IntrusivePtr<const IdDirectory> empty();
 
@@ -111,7 +120,7 @@ private:
 //
 // 維持的不變條件：entries 大小固定為 page_capacity。
 // 生命週期：不可變；新舊 revision 共享未改動的 page（D10）。
-class RecordPage : public RefCounted {
+class RecordPage final : public RefCounted {
 public:
     static constexpr std::size_t page_capacity = 64;
 
