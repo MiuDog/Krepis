@@ -103,6 +103,41 @@ if(MSVC)
     target_compile_options(bench_flow_sequence PRIVATE /utf-8 /W4 /permissive-)
 endif()
 
+# Spike 5: 跨平台 text shaping（HarfBuzz via FetchContent，依 FND-0003）
+#
+# 刻意預設關閉：FetchContent 會 clone 並建置 HarfBuzz，使一般 configure 變慢。
+# 啟用：cmake -B build -DKREPIS_BUILD_TEXT_SPIKE=ON
+option(KREPIS_BUILD_TEXT_SPIKE "建置 text shaping spike（會下載 HarfBuzz）" OFF)
+
+if(KREPIS_BUILD_TEXT_SPIKE)
+    include(FetchContent)
+
+    set(HB_BUILD_SUBSET OFF CACHE BOOL "" FORCE)
+    set(HB_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(HB_BUILD_UTILS OFF CACHE BOOL "" FORCE)
+    set(HB_HAVE_FREETYPE OFF CACHE BOOL "" FORCE)
+    set(HB_HAVE_GLIB OFF CACHE BOOL "" FORCE)
+    set(HB_HAVE_ICU OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(harfbuzz
+        GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
+        GIT_TAG 10.1.0
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(harfbuzz)
+
+    add_executable(spike5_text_shaping
+        spike5_text_shaping/spike5_shaping.cpp
+    )
+
+    target_link_libraries(spike5_text_shaping PRIVATE harfbuzz)
+
+    target_compile_features(spike5_text_shaping PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(spike5_text_shaping PRIVATE /utf-8 /W4 /permissive-)
+    endif()
+endif()
+
 # Spike 3: Submission Boundary Evaluation
 add_executable(spike3_submission_boundary
     spike3_submission_boundary/spike3_main.cpp

@@ -18,3 +18,4 @@ Thumbs.db
 
 # 工具套組 lockfile 以外的本機狀態
 .claude/settings.local.json
+/build-*/
