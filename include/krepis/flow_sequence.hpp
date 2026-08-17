@@ -139,8 +139,12 @@ public:
 
     TreeCursor(const TreeCursor&) = delete;
     TreeCursor& operator=(const TreeCursor&) = delete;
-    TreeCursor(TreeCursor&&) noexcept = default;
-    TreeCursor& operator=(TreeCursor&&) noexcept = default;
+
+    // Move 必須自訂：leaf_ 是借用 pointer，預設 move 會**複製**它，
+    // 使 moved-from cursor 的 is_valid() 謊報 true 卻不再持有 owning root。
+    // 搬移後來源一律歸零，符合「moved-from 為有效但未指定狀態」的慣例。
+    TreeCursor(TreeCursor&& other) noexcept;
+    TreeCursor& operator=(TreeCursor&& other) noexcept;
 
     [[nodiscard]] bool is_valid() const noexcept;
     [[nodiscard]] BlockId current() const;

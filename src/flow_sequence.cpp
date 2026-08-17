@@ -433,6 +433,33 @@ TreeCursor::TreeCursor(const FlowSequence& seq, std::size_t position)
     local_offset_ = remaining;
 }
 
+TreeCursor::TreeCursor(TreeCursor&& other) noexcept
+    : root_(std::move(other.root_)),
+      ancestors_(std::move(other.ancestors_)),
+      leaf_(other.leaf_),
+      local_offset_(other.local_offset_),
+      global_position_(other.global_position_) {
+    // leaf_ 是借用 pointer；來源已交出 owning root，必須一併失效。
+    other.leaf_ = nullptr;
+    other.local_offset_ = 0;
+    other.global_position_ = 0;
+}
+
+TreeCursor& TreeCursor::operator=(TreeCursor&& other) noexcept {
+    if (this != &other) {
+        root_ = std::move(other.root_);
+        ancestors_ = std::move(other.ancestors_);
+        leaf_ = other.leaf_;
+        local_offset_ = other.local_offset_;
+        global_position_ = other.global_position_;
+
+        other.leaf_ = nullptr;
+        other.local_offset_ = 0;
+        other.global_position_ = 0;
+    }
+    return *this;
+}
+
 bool TreeCursor::is_valid() const noexcept {
     return leaf_ != nullptr;
 }

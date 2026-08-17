@@ -66,7 +66,15 @@ if (state == State::finalizing || state == State::stopped) {
 
 ---
 
-### 疑點 2：`TreeCursor` 的 moved-from 狀態有 dangling pointer
+### 疑點 2：`TreeCursor` 的 moved-from 狀態有 dangling pointer 〔**已修，改審修法**〕
+
+> **狀態更新（2026-08-17）**：已改為自訂 move constructor／assignment，搬移後把來源的
+> `leaf_` 設為 `nullptr`、`local_offset_` 與 `global_position_` 歸零。
+> 回歸測試 `test_cursor_move_invalidates_source` 涵蓋兩條路徑。
+> **你現在要審的是「這個修法是否正確且充分」，而不是原缺陷。**
+> 下面保留原始描述作為脈絡。
+
+
 
 `include/krepis/flow_sequence.hpp` 的 `TreeCursor`
 
@@ -89,17 +97,24 @@ std::size_t global_position_ = 0;
 
 **我的主張**：這是缺陷，該修。修法是自訂 move，把來源的 `leaf_` 設為 `nullptr`。
 
-**你要回答的問題**：
+**你要回答的問題**（針對已實作的修法）：
 1. 你同意「moved-from 物件的 `is_valid()` 回報 true」本身就是錯的嗎？
    （C++ 慣例：moved-from 物件必須處於**有效但未指定**的狀態；`is_valid()` 說謊會讓
    使用者寫出看似合理卻 UB 的程式碼。）
-2. 修法選哪個：
-   - (A) 自訂 move constructor／assignment，清空 `leaf_`
-   - (B) 直接 `= delete` move，讓 cursor 完全不可搬移
-   - (C) 不修，改在文件寫「moved-from 只能解構」
-   我建議 (A)。**但 (B) 更保守，你可能更喜歡。**
-3. 這個問題有沒有同型的姊妹問題？去看 `ancestors_` 裡的 `const FlowInternalNode*`——
-   vector 被 move 走所以是空的，看起來安全。**確認一次。**
+2. 我選了 (A) 自訂 move。另外兩個選項是
+   (B) `= delete` move 讓 cursor 完全不可搬移、
+   (C) 不修而在文件註明「moved-from 只能解構」。
+   **(B) 比 (A) 保守——你偏好哪個？** 若你要 (B)，說一聲，改動很小。
+3. 檢查修法**充分性**：`src/flow_sequence.cpp` 的 move ctor 與 move assignment
+   都把來源的 `leaf_`／`local_offset_`／`global_position_` 歸零了嗎？
+   `root_` 與 `ancestors_` 靠各自型別的 move 語意歸零——**這個假設對嗎？**
+   （`IntrusivePtr` 的 move ctor 會把來源設 null：`intrusive_ptr.hpp:157-159`。
+   `std::vector` 的 move 後狀態是「有效但未指定」，標準**不保證**一定是空的——
+   但我們沒有讀它，所以無妨。**確認這個推理。**）
+4. move assignment 的 self-assignment 防護（`if (this != &other)`）必要嗎？
+   自我搬移在標準庫裡是「有效但未指定」，加防護是保守做法。你接受嗎？
+5. 這個問題有沒有同型的姊妹問題？全庫搜尋還有哪些型別同時持有
+   **owning pointer + 借用 raw pointer** 且使用預設 move。
 
 **判定**：_____________
 

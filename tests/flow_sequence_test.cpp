@@ -330,6 +330,41 @@ void test_cursor_seek_middle() {
     expect(cursor.current() == make_block(10), "retreat 兩次後為 block 10");
 }
 
+// 疑點 2 的回歸測試：moved-from cursor 不得謊報有效。
+void test_cursor_move_invalidates_source() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+
+    auto seq = FlowSequence::empty(config);
+    for (std::size_t i = 0; i < 12; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    auto source = TreeCursor(seq, 5);
+    expect(source.is_valid(), "搬移前 source 有效");
+
+    auto moved = TreeCursor(std::move(source));
+    expect(moved.is_valid(), "搬移後 target 有效");
+    expect(moved.current() == make_block(6), "搬移後 target 內容正確");
+    expect(moved.position() == 5, "搬移後 target position 正確");
+    expect(!source.is_valid(), "搬移後 source 必須失效（不得謊報 true）");
+    expect(source.position() == 0, "搬移後 source position 歸零");
+
+    // 搬移後的 target 仍可正常走訪，證明 ancestor stack 完整。
+    expect(moved.advance(), "搬移後仍可 advance");
+    expect(moved.current() == make_block(7), "搬移後 advance 內容正確");
+    expect(moved.retreat(), "搬移後仍可 retreat");
+    expect(moved.current() == make_block(6), "搬移後 retreat 內容正確");
+
+    // Move assignment 走同一條路徑。
+    auto other = TreeCursor(seq, 0);
+    other = std::move(moved);
+    expect(other.is_valid(), "move assignment 後 target 有效");
+    expect(other.current() == make_block(6), "move assignment 後內容正確");
+    expect(!moved.is_valid(), "move assignment 後 source 必須失效");
+}
+
 void test_cursor_bidirectional() {
     FlowSequenceConfig config;
     config.leaf_capacity = 4;
@@ -665,6 +700,7 @@ int main() {
     test_cursor_cross_leaf_boundaries();
     test_cursor_seek_middle();
     test_cursor_bidirectional();
+    test_cursor_move_invalidates_source();
 
     shutdown_default_reclamation_queue();
     return krepis_test::report("krepis.flow_sequence");
