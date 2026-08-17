@@ -139,12 +139,40 @@ private:
     std::vector<Entry> entries_;
 };
 
+// Record page table 的節點。
+//
+// 責任：以固定 fanout 的樹狀結構定位 RecordPage，使更新只複製 root 到該 page 的短路徑。
+// 維持的不變條件：children 長度不超過 fanout；同一棵樹的葉層深度相同。
+// 生命週期：不可變；owning edge 只向下形成 DAG（D17）。
+//
+// **與 `PageTableNode`（location_index.hpp）結構相同但型別不同。**
+// 兩者刻意暫不合併：閘門 7 第二輪重審中的程式碼不應同時被重構。
+// 重審通過後應抽成共用 template（見 tasks/ 的後續項目）。
+class RecordPageTableNode final : public RefCounted {
+public:
+    static constexpr std::size_t fanout = 64;
+
+    explicit RecordPageTableNode(std::vector<IntrusivePtr<const RecordPage>> pages) noexcept;
+    explicit RecordPageTableNode(
+        std::vector<IntrusivePtr<const RecordPageTableNode>> children) noexcept;
+
+    [[nodiscard]] bool is_leaf_level() const noexcept { return leaf_level_; }
+    [[nodiscard]] std::span<const IntrusivePtr<const RecordPage>> pages() const noexcept;
+    [[nodiscard]] std::span<const IntrusivePtr<const RecordPageTableNode>> children()
+        const noexcept;
+
+private:
+    bool leaf_level_;
+    std::vector<IntrusivePtr<const RecordPage>> pages_;
+    std::vector<IntrusivePtr<const RecordPageTableNode>> children_;
+};
+
 // 某個 revision 所見的完整記錄集合。
 //
 // 責任：以 slot 查找記錄，並以 COW 產生新版本。
 // 不負責：slot 配置 —— 那是 IdDirectory 的責任。
-// 維持的不變條件：修改只複製受影響的 page，其餘由新舊 revision 共享。
-// 生命週期：值型別語意；內部以 IntrusivePtr 共享 page。
+// 維持的不變條件：修改只複製受影響的 page 與 page-table 的短路徑，其餘由新舊 revision 共享。
+// 生命週期：值型別語意；內部以 IntrusivePtr 共享 page 與 page-table 節點。
 // 執行緒安全程度：同一實例不可併發修改；不同實例可併發讀取。
 class ObjectStoreSnapshot {
 public:
@@ -166,14 +194,17 @@ public:
     // 在新 revision 寫入 tombstone。舊 snapshot 仍能從自己的 page 讀到舊記錄（D10）。
     [[nodiscard]] ObjectStoreSnapshot with_tombstone(ObjectSlot slot) const;
 
-    [[nodiscard]] std::size_t capacity() const noexcept {
-        return pages_.size() * RecordPage::page_capacity;
-    }
+    [[nodiscard]] std::size_t capacity() const noexcept;
 
 private:
-    explicit ObjectStoreSnapshot(std::vector<IntrusivePtr<const RecordPage>> pages) noexcept;
+    ObjectStoreSnapshot(IntrusivePtr<const RecordPageTableNode> root, std::size_t depth) noexcept;
 
-    std::vector<IntrusivePtr<const RecordPage>> pages_;
+    // 以 entry 為單位寫入（record 與 tombstone 共用同一條短路徑）。
+    [[nodiscard]] ObjectStoreSnapshot with_entry(ObjectSlot slot, RecordPage::Entry entry) const;
+
+    // depth 為 0 表示空索引；depth 1 表示 root 是葉層（直接持 page）。
+    IntrusivePtr<const RecordPageTableNode> root_;
+    std::size_t depth_ = 0;
 };
 
 }  // namespace krepis

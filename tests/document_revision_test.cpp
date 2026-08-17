@@ -132,6 +132,40 @@ void test_store_cow_shares_untouched_pages() {
            "未改動的 page 2 內容一致");
 }
 
+// 閘門 7／E1 的同型問題：record page table 也必須在 slot 超出深度時長高，
+// 且更新只複製短路徑。fanout=64、page_capacity=64 → 深度 1 只容納 4,096 個 slot。
+void test_record_page_table_grows_and_shares() {
+    auto store = ObjectStoreSnapshot::empty();
+
+    const ObjectSlot shallow{4095};    // 深度 1 邊界
+    const ObjectSlot deep{10000};      // 需要深度 2
+    const ObjectSlot deeper{300000};   // 需要深度 3
+
+    store = store.with_record(shallow, make_intrusive<TextRecord>(1, std::string("s")));
+    store = store.with_record(deep, make_intrusive<TextRecord>(1, std::string("d")));
+    store = store.with_record(deeper, make_intrusive<TextRecord>(1, std::string("x")));
+
+    expect(static_cast<const TextRecord*>(store.get(shallow).get())->text() == "s",
+           "長高兩次後最舊的 slot 仍可讀");
+    expect(static_cast<const TextRecord*>(store.get(deep).get())->text() == "d",
+           "中間 slot 仍可讀");
+    expect(static_cast<const TextRecord*>(store.get(deeper).get())->text() == "x",
+           "最深 slot 正確");
+    expect(store.get(ObjectSlot{deep.value + 1}) == nullptr, "未配置的鄰近 slot 為 null");
+    expect(store.capacity() > deeper.value, "capacity 涵蓋最深的 slot");
+
+    // 短路徑 COW：更新一個 slot 不得影響舊版本，也不得動到其他 slot。
+    auto updated = store.with_record(deep, make_intrusive<TextRecord>(2, std::string("d2")));
+    expect(static_cast<const TextRecord*>(store.get(deep).get())->text() == "d",
+           "舊 snapshot 不受影響");
+    expect(static_cast<const TextRecord*>(updated.get(deep).get())->text() == "d2",
+           "新 snapshot 已更新");
+    expect(static_cast<const TextRecord*>(updated.get(shallow).get())->text() == "s",
+           "未改動的 slot 在新 snapshot 中一致");
+    expect(static_cast<const TextRecord*>(updated.get(deeper).get())->text() == "x",
+           "另一棵子樹完全共享");
+}
+
 // --- DocumentRevision ---
 
 void test_initial_revision_is_empty() {
@@ -355,6 +389,7 @@ int main() {
     test_store_write_and_read();
     test_store_tombstone_differs_from_absent();
     test_store_cow_shares_untouched_pages();
+    test_record_page_table_grows_and_shares();
 
     test_initial_revision_is_empty();
     test_new_object_advances_content_revision();
