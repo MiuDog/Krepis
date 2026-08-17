@@ -160,6 +160,11 @@ Font fallback 需要：列舉系統字型、查詢字型的 cmap 涵蓋範圍、
 **斷行是下一個該做的 spike**，因為它是唯一可能需要拖進 ICU 的項目，
 而 ICU 的體積會推翻「772 KB 可接受」這個結論。
 
+> **更新（2026-08-18）：該閘門已通過。** Spike 6 證實 libunibreak（94 KB）
+> 可完全取代 ICU 的 BreakIterator，涵蓋 UAX #14 斷行與 UAX #29 grapheme 分群，
+> CJK 行首禁則正確。**本報告的體積結論維持成立。**
+> 見 [`spike6-line-breaking-report.md`](spike6-line-breaking-report.md)。
+
 ## 判定
 
 **HarfBuzz 作為 shaping 層：通過，建議採用。**

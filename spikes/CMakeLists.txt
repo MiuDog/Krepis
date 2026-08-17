@@ -138,6 +138,50 @@ if(KREPIS_BUILD_TEXT_SPIKE)
     endif()
 endif()
 
+# Spike 6: 斷行與分群（libunibreak）——與 spike 5 共用同一個 opt-in 開關
+#
+# 這是唯一可能推翻 spike 5「772 KB 可接受」結論的項目：
+# 若斷行必須靠 ICU，整個文字堆疊的體積結論就要重寫。
+if(KREPIS_BUILD_TEXT_SPIKE)
+    FetchContent_Declare(libunibreak
+        GIT_REPOSITORY https://github.com/adah1972/libunibreak.git
+        GIT_TAG libunibreak_6_1
+        GIT_SHALLOW TRUE
+    )
+    # 只取原始碼，不 MakeAvailable —— libunibreak **沒有 CMakeLists.txt**（autotools 專案），
+    # 因此必須自行撰寫建置膠水。這是本 spike 記錄的整合成本之一。
+    FetchContent_Populate(libunibreak)
+
+    add_library(unibreak STATIC
+        ${libunibreak_SOURCE_DIR}/src/eastasianwidthdata.c
+        ${libunibreak_SOURCE_DIR}/src/eastasianwidthdef.c
+        ${libunibreak_SOURCE_DIR}/src/emojidata.c
+        ${libunibreak_SOURCE_DIR}/src/emojidef.c
+        ${libunibreak_SOURCE_DIR}/src/graphemebreak.c
+        ${libunibreak_SOURCE_DIR}/src/graphemebreakdata.c
+        ${libunibreak_SOURCE_DIR}/src/indicconjunctbreakdata.c
+        ${libunibreak_SOURCE_DIR}/src/linebreak.c
+        ${libunibreak_SOURCE_DIR}/src/linebreakdata.c
+        ${libunibreak_SOURCE_DIR}/src/linebreakdef.c
+        ${libunibreak_SOURCE_DIR}/src/unibreakbase.c
+        ${libunibreak_SOURCE_DIR}/src/unibreakdef.c
+        ${libunibreak_SOURCE_DIR}/src/wordbreak.c
+        ${libunibreak_SOURCE_DIR}/src/wordbreakdata.c
+    )
+    target_include_directories(unibreak PUBLIC ${libunibreak_SOURCE_DIR}/src)
+
+    add_executable(spike6_line_breaking
+        spike6_line_breaking/spike6_linebreak.cpp
+    )
+
+    target_link_libraries(spike6_line_breaking PRIVATE unibreak)
+
+    target_compile_features(spike6_line_breaking PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(spike6_line_breaking PRIVATE /utf-8 /W4 /permissive-)
+    endif()
+endif()
+
 # Spike 3: Submission Boundary Evaluation
 add_executable(spike3_submission_boundary
     spike3_submission_boundary/spike3_main.cpp
