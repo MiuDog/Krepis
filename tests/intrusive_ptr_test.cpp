@@ -291,40 +291,87 @@ void test_derived_type_cannot_shadow_counter() {
     expect(live_nodes.load() == before, "惡意衍生型別仍被正確回收一次");
 }
 
-// D17 ＋ 閘門 7／C3：關機是**併發冪等的冷路徑**。
+// 閘門 7／C3 第二輪重審要求的可控時序測試。
 //
-// 多個執行緒同時呼叫 shutdown 時：第一個執行完整流程（停止、drain、join），
-// 其餘等待同一次完整結果。修正前的實作會讓非首位呼叫者 terminate()。
+// **前一版測試沒有鑑別力**：它只建立 8 個執行緒就直接呼叫 shutdown。
+// 若首位 caller 在其餘執行緒啟動前就完成，其他 caller 會看到 `stopped` 而直接返回——
+// **舊實作在那條路徑上也會通過**，因此測試證明不了修正有效。
+//
+// 本版以「destructor 會阻塞的節點」造出**結構上不可能提早完成**的窗口：
+// worker 卡在該 destructor 內無法結束，首位 caller 因而必定卡在 `join()`，
+// 其餘 caller 進入 shutdown 時必定觀察到「已被認領且尚未完成」。
+// 在舊實作下，它們會看到 `state == stopping` 而 `std::terminate()`——測試會直接崩潰。
 //
 // 本測試必須是最後一個——之後 queue 不再接受 enqueue。
-void test_concurrent_shutdown_is_idempotent() {
+std::atomic<bool> blocking_gate_open{false};
+std::atomic<int> blocking_destructor_entered{0};
+
+class BlockingNode final : public RefCounted {
+public:
+    BlockingNode() noexcept { live_nodes.fetch_add(1); }
+    ~BlockingNode() override {
+        blocking_destructor_entered.fetch_add(1);
+        blocking_destructor_entered.notify_all();
+        // 卡住 worker，直到測試主執行緒放行。
+        while (!blocking_gate_open.load(std::memory_order_acquire)) {
+            blocking_gate_open.wait(false, std::memory_order_acquire);
+        }
+        live_nodes.fetch_sub(1);
+    }
+};
+
+void test_concurrent_shutdown_with_forced_overlap() {
     wait_until_reclaimed();
     const int before = live_nodes.load();
 
+    // 1. 讓 worker 卡在 destructor 內。
     {
-        auto node = make_intrusive<Node>(99);
-        (void)node;
+        auto blocker = make_intrusive<BlockingNode>();
+        (void)blocker;
     }
+    int entered = blocking_destructor_entered.load();
+    while (entered == 0) {
+        blocking_destructor_entered.wait(entered);
+        entered = blocking_destructor_entered.load();
+    }
+    // 到此為止：worker 確定在 destructor 裡，無法進入 Stopped。
 
+    // 2. 8 個執行緒同時呼叫 shutdown。首位必定卡在 join()。
     constexpr int caller_count = 8;
+    std::atomic<int> reached{0};
+    std::atomic<int> returned{0};
     std::vector<std::thread> callers;
     callers.reserve(caller_count);
-    std::atomic<int> returned{0};
 
     for (int i = 0; i < caller_count; ++i) {
-        callers.emplace_back([&returned] {
+        callers.emplace_back([&reached, &returned] {
+            reached.fetch_add(1);
+            reached.notify_all();
             shutdown_default_reclamation_queue();
             returned.fetch_add(1);
         });
     }
+
+    // 3. 等到全部 caller 都抵達呼叫點。worker 仍被 gate 擋住，
+    //    因此**不可能**有任何 caller 已完成 shutdown——這正是前一版缺少的保證。
+    int arrived = reached.load();
+    while (arrived < caller_count) {
+        reached.wait(arrived);
+        arrived = reached.load();
+    }
+
+    // 4. 放行，讓 worker 收尾並使 join() 返回。
+    blocking_gate_open.store(true, std::memory_order_release);
+    blocking_gate_open.notify_all();
+
     for (std::thread& caller : callers) {
         caller.join();
     }
 
-    expect(returned.load() == caller_count, "所有併發 shutdown 呼叫者都正常返回");
+    expect(returned.load() == caller_count, "重疊期間所有 shutdown caller 都正常返回");
     expect(default_reclamation_queue().is_shutdown(), "reclamation queue 進入 Stopped");
     expect(default_reclamation_queue().pending() == 0, "shutdown 完成後沒有 outstanding node");
-    expect(live_nodes.load() == before, "shutdown 已完成所有背景銷毀");
+    expect(live_nodes.load() == before, "阻塞節點最終被正確銷毀");
 
     // 關機後再呼叫仍須安靜返回（冪等）。
     shutdown_default_reclamation_queue();
@@ -358,6 +405,6 @@ int main() {
     test_allocation_matches_reclamation();
     test_derived_type_cannot_shadow_counter();
     test_snapshot_id_axes();
-    test_concurrent_shutdown_is_idempotent();
+    test_concurrent_shutdown_with_forced_overlap();
     return krepis_test::report("krepis.intrusive_ptr");
 }

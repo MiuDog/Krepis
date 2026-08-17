@@ -45,6 +45,39 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # 文字堆疊 spike 的跨平台驗證。
+  #
+  # Spike 5／6／7 都只在 Windows／MSVC 量測，但**跨平台正是整個選型的前提**——
+  # 三份報告都把這一點列為缺口。此 job 關掉那個缺口的 Linux 那一半；
+  # ARM（iPad）仍未涵蓋。
+  text-spikes-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install a font for shaping
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-dejavu-core
+
+      - name: Configure (text spikes on)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DKREPIS_BUILD_TEXT_SPIKE=ON
+
+      - name: Build text spikes
+        run: |
+          cmake --build build --target spike5_text_shaping -j$(nproc)
+          cmake --build build --target spike6_line_breaking -j$(nproc)
+          cmake --build build --target spike7_bidi -j$(nproc)
+
+      - name: Run shaping spike
+        run: ./build/spikes/spike5_text_shaping /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+
+      - name: Run line breaking spike
+        run: ./build/spikes/spike6_line_breaking
+
+      - name: Run bidi spike
+        run: ./build/spikes/spike7_bidi
+
   clang-tsan:
     runs-on: ubuntu-latest
     env:

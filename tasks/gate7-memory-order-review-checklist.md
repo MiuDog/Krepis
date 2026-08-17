@@ -25,10 +25,11 @@ lifetime 與 shutdown drain path」。**這道閘門不接受 AI 自審**——�
 
 ## 第一輪審查結果與修正（2026-08-18）
 
-第一輪判定：**未通過**。8 項要求修改、4 項接受。全部要求修改已實作，**等待第二輪重審**。
+第一輪判定：**未通過**。8 項要求修改、4 項接受。第二輪已完成技術重審：6 個修正項接受，
+C3 與 E1 仍要求修改，因此 Gate 7 仍未通過。
 
-依本檔規則「修完後重審該項，不是直接改判定」，下列項目的判定欄**維持「要求修改」**，
-另註明「已實作，待重審」。重審者請對照實作確認，通過後才改判定。
+依本檔規則「修完後重審該項，不是直接改判定」，以下保留第一輪意見、實作摘要與第二輪結論，
+讓後續審查者能追溯每次判定的依據。
 
 | 項目 | 要求 | 實作摘要 |
 |---|---|---|
@@ -106,7 +107,7 @@ if (state == State::finalizing || state == State::stopped) {
 3. 若你認為窗口該關掉：正確做法是把「登記 producer」與「檢查 state」合成單一原子操作
    （例如把兩者塞進同一個 word，用 CAS 一次完成）。**這個複雜度值得嗎？**
 
-**判定**：要求修改（2026-08-18）〔**已實作，待重審**〕
+**判定**：接受（第二輪重審，2026-08-18；第一輪要求修改）
 
 **審查意見**：將 state 與 active producer count 合併成單一 atomic word，以 CAS 建立明確的
 producer admission 線性化點。修正後必須重審本項；在此之前不得改判為接受。
@@ -115,6 +116,11 @@ producer admission 線性化點。修正後必須重審本項；在此之前不�
 `reclamation.cpp` 的 `enqueue` admission 迴圈與 worker 的 `(stopping,0) → (finalizing,0)` CAS。
 重審要點：(a) 計數欄 56 bit 是否足夠且不會借位到 state；(b) worker 的 finalize CAS 失敗後
 是否必然重跑而非漏掉節點；(c) `gate_.fetch_sub(1, release)` 作為離場是否與 admission CAS 相容。
+
+**第二輪重審**：接受。admission CAS 同時驗證 state 並增加 56-bit producer count；shutdown 只改
+state 並保留 count；worker 只以 `(stopping, 0)` 關閘，若 producer 入場使 word 改變，CAS 失敗後
+會回到外層迴圈重查。離場時 count 必定至少為 1，`fetch_sub(1, release)` 不會借位到 state。
+56-bit 同時 producer 數超過實際可建立的執行緒／位址空間上限，因此不是可達 overflow 路徑。
 
 ---
 
@@ -202,7 +208,7 @@ reference」。既有 reference 本身已經保證：物件存活、物件內容
 3. 測試 `intrusive_ptr_test.cpp:60-65` 用 concept 驗證 `retain`/`release`/`adopt` 不是 public。
    **這些 static_assert 涵蓋所有逃逸路徑嗎？**
 
-**判定**：要求修改（2026-08-18）〔**已實作，待重審**〕
+**判定**：接受（第二輪重審，2026-08-18；第一輪要求修改）
 
 **審查意見**：`IntrusivePtr` 必須明確呼叫 `RefCounted` 的唯一 counter 實作，不能讓衍生型別以
 同名 public `retain`／`release` 遮蔽。新增 hostile derived-type 與 raw constructibility 測試；並更正
@@ -211,6 +217,10 @@ reference」。既有 reference 本身已經保證：物件存活、物件內容
 **實作**：`retain_pointer`／`release_pointer` 以 `static_cast<const RefCounted*>(p)->RefCounted::retain()`
 限定呼叫；`test_derived_type_cannot_shadow_counter` 與 `ConstructibleFromRaw`／
 `ConstructibleFromMutableRaw` 的 `static_assert`。
+
+**第二輪重審**：接受。所有 copy／assignment 都只經 `retain_pointer`／`release_pointer`，限定呼叫
+`RefCounted` 的 private 實作；初始 owner 只能由 friend factory 以 private tag 建立。hostile derived
+type 測試證明同名 public 成員未被呼叫，const／mutable raw pointer 皆不能建構 owner。
 
 **上方「我的主張」已過時，一併更正**：原文寫「允許從 raw pointer retain 時需要 acquire」是錯的。
 **acquire 排序不能使物件存活**——若計數已歸零，任何 memory order 都救不了那次遞增。
@@ -254,7 +264,7 @@ default_reclamation_queue().enqueue(this);
    如果 `previous` 真的是 0，那次 `fetch_sub` 已經把計數變成 `0xFFFFFFFF` 了。
    **在 NDEBUG 建置（assert 被移除）下，這會怎麼樣？** 這是可接受的嗎？
 
-**判定**：要求修改（2026-08-18）〔**已實作，待重審**〕
+**判定**：接受（第二輪重審，2026-08-18；第一輪要求修改）
 
 **審查意見**：保留 `fetch_sub(release)` 加最後一次釋放才執行的 acquire fence；將 zero、poison、
 underflow 與 overflow 違約改為所有建置都立即終止。更正 poison 說明：問題是非法 retain 可能在
@@ -267,6 +277,11 @@ poison 的註解已改寫為「診斷輔助而非正確性保證」，並寫明�
 
 重審要點：熱路徑（`retain`／`release`）新增的分支對效能的影響。分支條件是剛載入的值，
 預期可完全預測；若你要求證據，可用 `spike4_intrusive_vs_shared` 對照修正前後。
+
+**第二輪重審**：接受。正常 release 仍是 `fetch_sub(release)`，只有最後一個 owner 執行 acquire
+fence；zero、poison、underflow、overflow 與 pending 下溢改由所有建置生效的 fail-fast 處理。
+Release benchmark 可完成全部五種 workload，新增分支沒有破壞 hot path 的可執行性；本項不把
+poison 當成 ownership 正確性來源。
 
 ---
 
@@ -298,7 +313,7 @@ do {
    （`intrusive_ptr.hpp:70`），所以其實不需要 const_cast 就能寫。
    **這個 const_cast 是必要的還是殘留？** 若是殘留，移除能讓意圖更清楚。
 
-**判定**：要求修改（2026-08-18）〔**已實作，待重審**〕
+**判定**：接受（第二輪重審，2026-08-18；第一輪要求修改）
 
 **審查意見**：Treiber push 的 release／acquire publication 正確；將 `reclaim_next_` 與 `head_`
 統一改為 `const RefCounted*`，使 immutable node 的回收鏈保持 const-correct 並移除 `const_cast`。
@@ -306,6 +321,10 @@ do {
 **實作**：`RefCounted::reclaim_next_` 與 `ReclamationQueue::head_` 皆為 `const RefCounted*`，
 `enqueue` 不再有 `const_cast`。`drain_once` 的 `delete node`（`node` 為 `const RefCounted*`）
 合法——標準允許對 const pointer 使用 `delete`。
+
+**第二輪重審**：接受。producer 在 release CAS 前完成 `reclaim_next_` 普通寫；consumer 以 acquire
+exchange 取得批次。CAS 失敗時節點尚未發布，可以安全重寫 next。整條回收鏈維持 const pointer，
+沒有殘留 `const_cast`。
 
 ---
 
@@ -394,7 +413,7 @@ wait 之前，producer 剛好 bump」不會漏，因為 wait 進去時值已經�
 3. `wait_until_idle` 從測試以外的地方被呼叫嗎？如果它是測試專用，
    **它的正確性要求可以放寬嗎？** （我的看法：不行，它進了 public header。）
 
-**判定**：要求修改（2026-08-18）〔**已實作，待重審 —— 本輪最嚴重的發現**〕
+**判定**：接受（第二輪重審，2026-08-18；第一輪要求修改）
 
 **實作**：新增 `ReclamationQueue::worker_should_wake()`，同時檢查 `head_ != nullptr` 與
 `state != running`；`worker_main` 在讀 generation 之**前與之後**都呼叫同一個 predicate。
@@ -406,6 +425,11 @@ wait 之前，producer 剛好 bump」不會漏，因為 wait 進去時值已經�
 切成 `stopping` 並 bump generation，worker 隨後讀到新 generation，再以同一值進入 wait，便可能
 與正在 `join()` 的 shutdown 永久互等。`worker_main()` 必須在讀 generation 後重查完整等待條件；
 保留單 worker 的 `notify_one()` 與多個 public waiter 的 `notify_all()`。
+
+**第二輪重審**：接受。`worker_should_wake()` 同時涵蓋已發布 work 與所有 non-running state，且在
+讀取 `worker_generation_` 前後使用同一 predicate；事件若落在第二次檢查與 wait 之間，generation
+值改變會使 `atomic::wait(old)` 立即返回。單 worker 使用 `notify_one`、多 idle waiter 使用
+`notify_all` 的分工維持正確。
 
 ---
 
@@ -435,7 +459,7 @@ if (!state_.compare_exchange_strong(expected, State::stopping, acq_rel, acquire)
    **關機證明（「配置數等於釋放數」）在 Release 建置下還存在嗎？**
    若不存在，D17 要求的證明只在 Debug 成立——**這可接受嗎？**
 
-**判定**：要求修改（2026-08-18，依授權採用分析建議）〔**已實作，待重審**〕
+**判定**：要求修改（第二輪重審，2026-08-18；實作正確、回歸測試仍不足）
 
 **實作**：`shutdown_claimed_`（誰執行）與 `shutdown_complete_`（何時可返回）兩個 flag。
 首位呼叫者送出停止要求、`join()`、執行四項後置檢查，最後設 `shutdown_complete_` 並 `notify_all`；
@@ -448,6 +472,31 @@ destructor 保留並加註「預設 singleton 刻意不解構，此 destructor �
 保留 destructor 作為非 singleton ownership 的防禦性生命週期保證，並註明預設 singleton 刻意不解構。
 四個 shutdown postcondition 改為所有建置都執行的 fail-fast 檢查；配置數等於回收數則繼續由
 Release CI 的 accounting test 提供證據。late enqueue 仍是生命週期違約並立即終止。
+
+**第二輪重審**：實作本身通過。`shutdown_claimed_` 選出唯一執行者；其他 caller 等待
+`shutdown_complete_`，而 complete 只在 join 與四項 always-on postcondition 完成後發布。
+但 `test_concurrent_shutdown_is_idempotent` 只建立 8 個執行緒後直接呼叫，沒有 barrier 或受控阻塞
+保證呼叫期間重疊；舊實作若第一個 caller 很快完成，其餘 caller 看到 `stopped` 後返回，測試仍可能
+通過。必須補一個確定讓首位 caller 卡在 join、其餘 caller 已進入 shutdown 的可控時序測試。
+
+**回應第二輪意見（2026-08-18）**：**接受該批評——原測試確實不具鑑別力。**
+
+已改為 `test_concurrent_shutdown_with_forced_overlap`，以「destructor 會阻塞的節點」
+（`BlockingNode`）造出**結構上不可能提早完成**的窗口：
+
+1. 建立並釋放 `BlockingNode`；worker 進入其 destructor 後卡在 gate 上
+2. 主執行緒等待 `blocking_destructor_entered != 0`，確認 worker 確實卡住
+3. 此時才啟動 8 個 caller。worker 無法進入 `Stopped`，**首位 caller 必定卡在 `join()`**
+4. 等待 8 個 caller 全部抵達呼叫點——因為 worker 被擋住，
+   **不可能有任何 caller 已完成 shutdown**，這正是原測試缺少的保證
+5. 放行 gate，worker 收尾，`join()` 返回，全部 caller 依序返回
+
+**鑑別力驗證**：舊實作下 caller 2–8 進入時會觀察到 `state == stopping`，
+走到 `std::terminate()`，**測試程序直接崩潰**而非回報失敗。因此本測試能區分新舊實作，原版不能。
+
+**殘留的不精確（主動聲明）**：步驟 4 的計數在呼叫**之前**遞增，嚴格說只證明「已抵達呼叫點」
+而非「已進入函式內部」。但 worker 被 gate 擋住使「首位 caller 已完成」在物理上不可能，
+因此該不精確不影響本測試要證明的性質。**若你認為仍不足，請指出。**
 
 ---
 
@@ -509,7 +558,7 @@ Release CI 的 accounting test 提供證據。late enqueue 仍是生命週期違
 3. 不論結論如何，用 ASan 實跑一次 `krepis_flow_sequence_test`（CI 的 `clang-asan` job
    會做）。**人工推理與工具驗證都要有**——這正是閘門 5 與閘門 7 分開列的原因。
 
-**判定**：要求修改（2026-08-18，依授權採用分析建議）〔**已實作，待重審**〕
+**判定**：接受（第二輪重審，2026-08-18；第一輪要求修改）
 
 **實作**：`rebalance_children` 新增 `left_pin`／`right_pin` 兩個區域 `IntrusivePtr`，
 raw pointer 一律由 pin 取得。覆寫 `children[first]`／`children[second]` 時舊節點仍被 pin 保活，
@@ -521,6 +570,10 @@ ASan 驗證仍待 CI 的 `clang-asan` job（閘門 5）提供。
 use-after-free。然而這仍是對目前敘述順序的脆弱保證。`rebalance_children` 應先複製 left／right 的
 `IntrusivePtr<const FlowSequenceNode>` 作為局部 owner pin，再從 owner 取得 raw pointer，讓後續重排
 不可能破壞 lifetime；並保留 ASan 的 split／merge／redistribute 路徑驗證。
+
+**第二輪重審**：接受。`left_pin`／`right_pin` 在任何 child entry 覆寫前取得 owner，raw pointer
+只由 pin 派生，且 pin 活到該次迴圈結束；安全性不再依賴賦值求值順序。MSVC Debug／Release 的
+merge 與 redistribute 測試通過；ASan／TSan 仍屬閘門 5，未在本機執行。
 
 ---
 
@@ -540,7 +593,7 @@ use-after-free。然而這仍是對目前敘述順序的脆弱保證。`rebalanc
    pages，**沒有用到 `PageTableNode`**。那 `PageTableNode` 是死碼嗎？
    （若是，該刪還是該接上？死碼會讓後續審查者以為它在用。）
 
-**判定**：要求修改（2026-08-18，依授權採用分析建議）〔**已實作，待重審**〕
+**判定**：要求修改（第二輪重審，2026-08-18；page tree 正確、ObjectSlot 邊界仍未封閉）
 
 **實作**：
 1. `LocationIndex` 改以 `PageTableNode` 樹為 root（fanout 64），`set()` 只複製 root 到該 page
@@ -563,6 +616,14 @@ child owner，沒有 setter，已使用向下的 `IntrusivePtr<const T>`；但 `
 不需擴充的具體 RefCounted 節點標為 `final`，並把可擴充 `ObjectRecord` 的 owning edge 限制明文化：
 跨記錄關係以穩定 ID 表示，不得在 record 內形成 reclamation-owned cycle。
 
+**第二輪重審**：page tree 與 owning DAG 修正本身成立；LocationIndex 與 ObjectStore 都已改為
+fanout 64 的 immutable root，具體節點為 `final`，record 跨關係限制也已明文化。但 D14 說索引鍵是
+`ObjectSlot`，公開 `LocationIndex::lookup/set/clear` 仍接受任意 `std::size_t`。在 64-bit 平台對
+`SIZE_MAX` 建立索引時需要 depth 10，實際可定址範圍為 `64^11 = 2^66`，`capacity()` 以 size_t
+相乘後溢位成 0。應將 ObjectSlot 移到共用基礎 header，讓 LocationIndex API 直接接收並驗證
+ObjectSlot；或至少限制輸入域並讓 capacity 採 checked／saturating arithmetic。修正前不能宣稱
+capacity 與公開 API 的實際可定址範圍一致。
+
 ---
 
 ## 審查完成後
@@ -583,14 +644,14 @@ child owner，沒有 setter，已使用向下的 `IntrusivePtr<const T>`；但 `
 - 最嚴重發現：**C2 的 worker／join 死鎖**（可重現的推理鏈已記錄），
   以及疑點 1 的 producer 誤殺窗口
 
-### 第二輪（待進行）
+### 第二輪（2026-08-18）
 
-全部 8 項要求修改已實作並通過 11 個測試套件，等待重審。
+- 審查者：Codex 技術重審（依使用者授權採用分析建議；**不是人類最終簽核**）
+- 驗證：MSVC Debug 11/11、Release 11/11；intrusive_ptr Debug／Release 各重複 100 次通過
+- 每項判定：第一輪 8 個待修項中，6 項接受；C3、E1 仍要求修改
+- 結論：**未通過** —— shutdown 回歸測試未強制併發重疊；LocationIndex 未封閉 ObjectSlot 型別與
+  capacity overflow 邊界
+- 未查證：本機沒有 clang，ASan／TSan 結果仍待 CI（屬閘門 5）
 
-- 姓名：_____________
-- 日期：_____________
-- 結論：_____________
-
-**重審範圍**：只需重審標記〔已實作，待重審〕的 8 項。
-第一輪判定為「接受」的 B2、C1、D1 與疑點 2 不需重審，但 **C1 的成立以疑點 1 修正為前提**，
-確認疑點 1 後 C1 才算真正閉合。
+第一輪接受的 B2、C1、D1 與疑點 2 未重新開案；疑點 1 已在本輪接受，因此 C1 的 packed gate
+前提已閉合。

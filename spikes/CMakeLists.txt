@@ -182,6 +182,36 @@ if(KREPIS_BUILD_TEXT_SPIKE)
     endif()
 endif()
 
+# Spike 7: 雙向文字（SheenBidi）——文字堆疊的最後一塊
+if(KREPIS_BUILD_TEXT_SPIKE)
+    FetchContent_Declare(sheenbidi
+        GIT_REPOSITORY https://github.com/Tehreer/SheenBidi.git
+        GIT_TAG v2.8
+        GIT_SHALLOW TRUE
+    )
+    # 與 libunibreak 同樣沒有 CMakeLists（Makefile ＋ meson），需自寫膠水。
+    # 但 SheenBidi 提供 unity build：SheenBidi.c 在 SB_CONFIG_UNITY 下 include 其餘所有 .c，
+    # 因此只需編譯單一檔案——**升級時不必人工同步原始碼清單**，
+    # 這一點比 libunibreak 好。
+    FetchContent_Populate(sheenbidi)
+
+    add_library(sheenbidi STATIC ${sheenbidi_SOURCE_DIR}/Source/SheenBidi.c)
+    target_compile_definitions(sheenbidi PRIVATE SB_CONFIG_UNITY)
+    target_include_directories(sheenbidi PUBLIC ${sheenbidi_SOURCE_DIR}/Headers)
+    target_include_directories(sheenbidi PRIVATE ${sheenbidi_SOURCE_DIR}/Source)
+
+    add_executable(spike7_bidi
+        spike7_bidi/spike7_bidi.cpp
+    )
+
+    target_link_libraries(spike7_bidi PRIVATE sheenbidi)
+
+    target_compile_features(spike7_bidi PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(spike7_bidi PRIVATE /utf-8 /W4 /permissive-)
+    endif()
+endif()
+
 # Spike 3: Submission Boundary Evaluation
 add_executable(spike3_submission_boundary
     spike3_submission_boundary/spike3_main.cpp

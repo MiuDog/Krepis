@@ -1,5 +1,6 @@
-# 建置產物
+# 建置輸出
 /build/
+/build-*/
 /out/
 CMakeUserPresets.json
 
@@ -7,8 +8,8 @@ CMakeUserPresets.json
 .vs/
 *.user
 
-# .vscode 的共用設定進版控（IntelliSense 的 includePath、cmake 完整路徑、建置工作）；
-# 只排除個人層級的覆寫。
+# .vscode 的個人設定（IntelliSense includePath、本機建置路徑等）不進版控，
+# 但共用的設定要保留。
 .vscode/*.local.json
 .vscode/launch.local.json
 
@@ -16,6 +17,5 @@ CMakeUserPresets.json
 Thumbs.db
 .DS_Store
 
-# 工具套組 lockfile 以外的本機狀態
+# 本機權限 lockfile，因人而異
 .claude/settings.local.json
-/build-*/
