@@ -4,6 +4,7 @@
 // Chunked B+ tree（Block rope），以 COW 發布不可變 revision（D8）。
 
 #include "krepis/intrusive_ptr.hpp"
+#include "krepis/leaf_key.hpp"
 #include "krepis/object_id.hpp"
 
 #include <cassert>
@@ -43,20 +44,23 @@ protected:
 // 可否複製／移動：不可（RefCounted）。
 class FlowLeafNode final : public FlowSequenceNode {
 public:
-    explicit FlowLeafNode(std::vector<BlockId> blocks) noexcept;
+    FlowLeafNode(LeafKey key, std::vector<BlockId> blocks) noexcept;
 
     [[nodiscard]] bool is_leaf() const noexcept override;
     [[nodiscard]] std::size_t block_count() const noexcept override;
     [[nodiscard]] std::span<const BlockId> blocks() const noexcept;
+    [[nodiscard]] const LeafKey& key() const noexcept { return key_; }
 
 private:
+    LeafKey key_;
     std::vector<BlockId> blocks_;
 };
 
-// Internal node 的 child entry：child pointer 與該子樹的 block 總數。
+// Internal node 的 child entry：child pointer、該子樹的 block 總數與最小 LeafKey。
 struct ChildEntry {
     IntrusivePtr<const FlowSequenceNode> child;
     std::size_t subtree_block_count = 0;
+    LeafKey min_leaf_key{};
 };
 
 // Internal 節點：儲存 child entry 序列，以 subtree_block_count 導航 rank。
@@ -94,6 +98,13 @@ public:
 
     // 前置條件：position < block_count()。
     [[nodiscard]] BlockId at(std::size_t position) const;
+
+    // 回傳包含 position 的 leaf 的 LeafKey。前置條件：position < block_count()。
+    [[nodiscard]] LeafKey leaf_key_at(std::size_t position) const;
+
+    // 依 LeafKey 尋找該 leaf 的起始 rank（第一個 block 的 position）。
+    // 找不到回傳 block_count()（等同 past-the-end）。
+    [[nodiscard]] std::size_t find_by_key(const LeafKey& key) const;
 
     // 前置條件：position <= block_count()。回傳包含插入結果的新 FlowSequence。
     [[nodiscard]] FlowSequence insert(std::size_t position, BlockId block_id) const;

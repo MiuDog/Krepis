@@ -15,6 +15,7 @@ using krepis::FlowSequence;
 using krepis::FlowSequenceConfig;
 using krepis::FlowSequenceNode;
 using krepis::ObjectId;
+using krepis::LeafKey;
 using krepis::TreeCursor;
 using krepis::default_reclamation_queue;
 using krepis::shutdown_default_reclamation_queue;
@@ -452,6 +453,97 @@ void test_no_rebalance_above_low_water() {
     }
 }
 
+// --- D13: LeafKey integration tests ---
+
+void test_leaf_key_assigned_on_insert() {
+    auto seq = FlowSequence::empty().insert(0, make_block(1));
+    auto key = seq.leaf_key_at(0);
+    expect(key.high != 0 || key.low != 0, "第一個 leaf 的 key 非零");
+}
+
+void test_leaf_keys_ordered_after_split() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+
+    auto seq = FlowSequence::empty(config);
+    for (std::size_t i = 0; i < 10; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    // Collect leaf keys via leaf_key_at at boundary positions.
+    LeafKey prev{};
+    bool first = true;
+    bool ordered = true;
+    for (std::size_t i = 0; i < seq.block_count(); ++i) {
+        auto key = seq.leaf_key_at(i);
+        if (first) {
+            prev = key;
+            first = false;
+        } else if (key != prev) {
+            if (key < prev) {
+                ordered = false;
+                break;
+            }
+            prev = key;
+        }
+    }
+    expect(ordered, "split 後 leaf key 維持遞增順序");
+}
+
+void test_find_by_key_roundtrip() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+
+    auto seq = FlowSequence::empty(config);
+    for (std::size_t i = 0; i < 20; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    // For each position, get its leaf key, then find_by_key should return
+    // the start of that leaf.
+    bool all_roundtrip = true;
+    for (std::size_t i = 0; i < seq.block_count(); ++i) {
+        auto key = seq.leaf_key_at(i);
+        auto found_pos = seq.find_by_key(key);
+        if (found_pos > i || found_pos == seq.block_count()) {
+            all_roundtrip = false;
+            break;
+        }
+        // found_pos should be <= i (start of that leaf)
+        if (seq.leaf_key_at(found_pos) != key) {
+            all_roundtrip = false;
+            break;
+        }
+    }
+    expect(all_roundtrip, "leaf_key_at -> find_by_key roundtrip 正確");
+}
+
+void test_leaf_keys_stable_across_unrelated_inserts() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+
+    auto seq = FlowSequence::empty(config);
+    for (std::size_t i = 0; i < 8; ++i) {
+        seq = seq.insert(i, make_block(i + 1));
+    }
+
+    auto key_before = seq.leaf_key_at(6);
+    // Insert at front — shouldn't change the key of the leaf containing position 6.
+    auto seq2 = seq.insert(0, make_block(100));
+    auto key_after = seq2.leaf_key_at(7);  // shifted by 1
+    expect(key_before == key_after, "不相關位置的插入不改變其他 leaf 的 key");
+}
+
+void test_find_by_key_not_found() {
+    auto seq = FlowSequence::empty().insert(0, make_block(1));
+    LeafKey bogus{999, 999};
+    auto pos = seq.find_by_key(bogus);
+    expect(pos == seq.block_count(), "不存在的 key 回傳 past-the-end");
+}
+
 // --- D17 Gate 3: snapshot parallel traversal ---
 
 std::uint64_t compute_snapshot_hash(const FlowSequence& seq) {
@@ -558,6 +650,12 @@ int main() {
     test_redistribute_on_underflow();
     test_repeated_delete_with_rebalance();
     test_no_rebalance_above_low_water();
+
+    test_leaf_key_assigned_on_insert();
+    test_leaf_keys_ordered_after_split();
+    test_find_by_key_roundtrip();
+    test_leaf_keys_stable_across_unrelated_inserts();
+    test_find_by_key_not_found();
 
     test_snapshot_parallel_traversal();
 

@@ -8,8 +8,8 @@ namespace krepis {
 
 // --- FlowLeafNode ---
 
-FlowLeafNode::FlowLeafNode(std::vector<BlockId> blocks) noexcept
-    : blocks_(std::move(blocks)) {
+FlowLeafNode::FlowLeafNode(LeafKey key, std::vector<BlockId> blocks) noexcept
+    : key_(key), blocks_(std::move(blocks)) {
     assert(!blocks_.empty() && "leaf 不應為空");
 }
 
@@ -36,27 +36,46 @@ std::span<const ChildEntry> FlowInternalNode::children() const noexcept { return
 
 namespace {
 
+LeafKey get_min_leaf_key(const FlowSequenceNode* node) {
+    while (!node->is_leaf()) {
+        const auto* internal = static_cast<const FlowInternalNode*>(node);
+        node = internal->children()[0].child.get();
+    }
+    return static_cast<const FlowLeafNode*>(node)->key();
+}
+
+ChildEntry make_child_entry(IntrusivePtr<const FlowSequenceNode> child) {
+    auto count = child->block_count();
+    auto key = get_min_leaf_key(child.get());
+    return {std::move(child), count, key};
+}
+
 struct InsertResult {
     IntrusivePtr<const FlowSequenceNode> left;
     IntrusivePtr<const FlowSequenceNode> right;
 };
 
 InsertResult insert_into_leaf(const FlowLeafNode* leaf, std::size_t position,
-                              BlockId block_id, const FlowSequenceConfig& config) {
+                              BlockId block_id, const FlowSequenceConfig& config,
+                              const LeafKey& right_bound) {
     auto blocks = std::vector<BlockId>(leaf->blocks().begin(), leaf->blocks().end());
     assert(position <= blocks.size());
     blocks.insert(blocks.begin() + static_cast<std::ptrdiff_t>(position), block_id);
 
     if (blocks.size() <= config.leaf_capacity) {
-        return {make_intrusive<FlowLeafNode>(std::move(blocks)), nullptr};
+        return {make_intrusive<FlowLeafNode>(leaf->key(), std::move(blocks)), nullptr};
     }
 
     auto mid = static_cast<std::ptrdiff_t>(blocks.size() / 2);
     auto left_blocks = std::vector<BlockId>(blocks.begin(), blocks.begin() + mid);
     auto right_blocks = std::vector<BlockId>(blocks.begin() + mid, blocks.end());
+
+    auto new_key = leaf_key_midpoint(leaf->key(), right_bound);
+    LeafKey right_key = new_key.value_or(right_bound);
+
     return {
-        make_intrusive<FlowLeafNode>(std::move(left_blocks)),
-        make_intrusive<FlowLeafNode>(std::move(right_blocks)),
+        make_intrusive<FlowLeafNode>(leaf->key(), std::move(left_blocks)),
+        make_intrusive<FlowLeafNode>(right_key, std::move(right_blocks)),
     };
 }
 
@@ -78,12 +97,13 @@ std::vector<ChildEntry> copy_children_with_replacement(
     result.reserve(old_children.size() + (replacement.right ? 1 : 0));
     for (std::size_t i = 0; i < old_children.size(); ++i) {
         if (i == replaced_idx) {
-            result.push_back({replacement.left, replacement.left->block_count()});
+            result.push_back(make_child_entry(replacement.left));
             if (replacement.right) {
-                result.push_back({replacement.right, replacement.right->block_count()});
+                result.push_back(make_child_entry(replacement.right));
             }
         } else {
-            result.push_back({old_children[i].child, old_children[i].subtree_block_count});
+            result.push_back({old_children[i].child, old_children[i].subtree_block_count,
+                              old_children[i].min_leaf_key});
         }
     }
     return result;
@@ -104,10 +124,11 @@ InsertResult split_children(std::vector<ChildEntry> children) {
 }
 
 InsertResult insert_into(const FlowSequenceNode* node, std::size_t position,
-                         BlockId block_id, const FlowSequenceConfig& config) {
+                         BlockId block_id, const FlowSequenceConfig& config,
+                         const LeafKey& right_bound) {
     if (node->is_leaf()) {
         return insert_into_leaf(static_cast<const FlowLeafNode*>(node),
-                                position, block_id, config);
+                                position, block_id, config, right_bound);
     }
 
     const auto* internal = static_cast<const FlowInternalNode*>(node);
@@ -116,8 +137,12 @@ InsertResult insert_into(const FlowSequenceNode* node, std::size_t position,
     std::size_t remaining = position;
     std::size_t child_idx = find_child_for_position(children, remaining);
 
+    LeafKey child_right_bound = (child_idx + 1 < children.size())
+        ? children[child_idx + 1].min_leaf_key
+        : right_bound;
+
     auto child_result = insert_into(children[child_idx].child.get(),
-                                    remaining, block_id, config);
+                                    remaining, block_id, config, child_right_bound);
 
     auto new_children = copy_children_with_replacement(children, child_idx, child_result);
 
@@ -163,20 +188,27 @@ void rebalance_children(std::vector<ChildEntry>& children, const FlowSequenceCon
             combined.insert(combined.end(), right_src->blocks().begin(), right_src->blocks().end());
 
             if (total <= config.leaf_capacity) {
+                // Merge: keep leftmost key.
                 auto merged_count = combined.size();
-                children[first] = {make_intrusive<FlowLeafNode>(std::move(combined)), merged_count};
+                auto merged_key = left_src->key();
+                children[first] = {make_intrusive<FlowLeafNode>(merged_key, std::move(combined)),
+                                   merged_count, merged_key};
                 children.erase(children.begin() + static_cast<std::ptrdiff_t>(second));
                 merged = true;
                 break;
             }
-            // Redistribute evenly. Don't restart — this is the best split possible.
+            // Redistribute evenly. Left keeps its key, right keeps its key.
             auto mid = static_cast<std::ptrdiff_t>(total / 2);
             auto left_blocks = std::vector<BlockId>(combined.begin(), combined.begin() + mid);
             auto right_blocks = std::vector<BlockId>(combined.begin() + mid, combined.end());
             auto left_count = left_blocks.size();
             auto right_count = right_blocks.size();
-            children[first] = {make_intrusive<FlowLeafNode>(std::move(left_blocks)), left_count};
-            children[second] = {make_intrusive<FlowLeafNode>(std::move(right_blocks)), right_count};
+            auto left_key = left_src->key();
+            auto right_key = right_src->key();
+            children[first] = {make_intrusive<FlowLeafNode>(left_key, std::move(left_blocks)),
+                               left_count, left_key};
+            children[second] = {make_intrusive<FlowLeafNode>(right_key, std::move(right_blocks)),
+                                right_count, right_key};
         }
     }
 }
@@ -193,7 +225,7 @@ IntrusivePtr<const FlowSequenceNode> remove_from(const FlowSequenceNode* node,
         if (blocks.empty()) {
             return nullptr;
         }
-        return make_intrusive<FlowLeafNode>(std::move(blocks));
+        return make_intrusive<FlowLeafNode>(leaf->key(), std::move(blocks));
     }
 
     const auto* internal = static_cast<const FlowInternalNode*>(node);
@@ -209,11 +241,11 @@ IntrusivePtr<const FlowSequenceNode> remove_from(const FlowSequenceNode* node,
     for (std::size_t i = 0; i < children.size(); ++i) {
         if (i == child_idx) {
             if (new_child) {
-                auto count = new_child->block_count();
-                new_children.push_back({std::move(new_child), count});
+                new_children.push_back(make_child_entry(std::move(new_child)));
             }
         } else {
-            new_children.push_back({children[i].child, children[i].subtree_block_count});
+            new_children.push_back({children[i].child, children[i].subtree_block_count,
+                                    children[i].min_leaf_key});
         }
     }
 
@@ -278,23 +310,81 @@ BlockId FlowSequence::at(std::size_t position) const {
     return leaf->blocks()[remaining];
 }
 
+LeafKey FlowSequence::leaf_key_at(std::size_t position) const {
+    assert(root_ && position < block_count());
+    const FlowSequenceNode* node = root_.get();
+    std::size_t remaining = position;
+
+    while (!node->is_leaf()) {
+        const auto* internal = static_cast<const FlowInternalNode*>(node);
+        for (const auto& entry : internal->children()) {
+            if (remaining < entry.subtree_block_count) {
+                node = entry.child.get();
+                break;
+            }
+            remaining -= entry.subtree_block_count;
+        }
+    }
+    return static_cast<const FlowLeafNode*>(node)->key();
+}
+
+std::size_t FlowSequence::find_by_key(const LeafKey& key) const {
+    if (!root_) {
+        return 0;
+    }
+    const FlowSequenceNode* node = root_.get();
+    std::size_t prefix = 0;
+
+    while (!node->is_leaf()) {
+        const auto* internal = static_cast<const FlowInternalNode*>(node);
+        auto children = internal->children();
+        bool found = false;
+        for (std::size_t i = children.size(); i > 0; --i) {
+            if (children[i - 1].min_leaf_key <= key) {
+                node = children[i - 1].child.get();
+                found = true;
+                break;
+            }
+            // Don't add to prefix yet - we're searching backwards
+        }
+        if (!found) {
+            return block_count();
+        }
+        // Recompute prefix: add block counts of all children before the selected one
+        auto children2 = internal->children();
+        for (std::size_t i = 0; i < children2.size(); ++i) {
+            if (children2[i].child.get() == node) {
+                break;
+            }
+            prefix += children2[i].subtree_block_count;
+        }
+    }
+
+    const auto* leaf = static_cast<const FlowLeafNode*>(node);
+    if (leaf->key() == key) {
+        return prefix;
+    }
+    return block_count();
+}
+
 FlowSequence FlowSequence::insert(std::size_t position, BlockId block_id) const {
     assert(position <= block_count());
 
     if (!root_) {
+        auto initial_key = leaf_key_midpoint(leaf_key_min, leaf_key_max).value();
         return FlowSequence(config_,
-                            make_intrusive<FlowLeafNode>(std::vector<BlockId>{block_id}));
+                            make_intrusive<FlowLeafNode>(initial_key, std::vector<BlockId>{block_id}));
     }
 
-    auto result = insert_into(root_.get(), position, block_id, config_);
+    auto result = insert_into(root_.get(), position, block_id, config_, leaf_key_max);
 
     if (!result.right) {
         return FlowSequence(config_, std::move(result.left));
     }
 
     std::vector<ChildEntry> root_children;
-    root_children.push_back({result.left, result.left->block_count()});
-    root_children.push_back({result.right, result.right->block_count()});
+    root_children.push_back(make_child_entry(result.left));
+    root_children.push_back(make_child_entry(result.right));
     return FlowSequence(config_,
                         make_intrusive<FlowInternalNode>(std::move(root_children)));
 }
