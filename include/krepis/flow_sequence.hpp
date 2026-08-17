@@ -14,11 +14,17 @@
 
 namespace krepis {
 
-// Leaf 容量、internal fanout 與重平衡門檻。數值由 benchmark 決定（D16）。
+// Leaf 容量、internal fanout 與重平衡門檻。
+//
+// 數值由 benchmark 定案（2026-08-17，見 tasks/lay-0002-chunking-parameters-report.md）：
+// 全部候選設定都在 frame budget 的 1/12 以下，因此**延遲不是選擇依據**；
+// 定案依「每次編輯的節點配置數」決定——leaf=64 是節點數掉到 3 的最小值。
+//
+// merge_low_water 必須 < leaf_capacity / 2，否則 split 與 merge 會在同一邊界震盪（D16）。
 struct FlowSequenceConfig {
     std::size_t leaf_capacity = 64;
     std::size_t internal_fanout = 32;
-    std::size_t merge_low_water = 16;
+    std::size_t merge_low_water = 24;
 };
 
 // B+ tree 節點基底。發布後不可變（D8）。

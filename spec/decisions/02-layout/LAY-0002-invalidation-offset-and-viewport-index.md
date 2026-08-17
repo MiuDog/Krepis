@@ -102,7 +102,7 @@ FlowLayoutIndex
 - Viewport 連續走訪以 leaf 內連續記憶體為主，避免每個 Block 一次指標跳轉。
 - ObjectStore 仍保存 BlockRecord；B+ tree leaf 只保存 BlockId 與該索引責任所需資料。
 
-Leaf 容量、internal fanout 與 split／merge／redistribution 門檻尚未裁決。
+Leaf 容量、internal fanout 與 split／merge／redistribution 門檻見 **D20**（已定案）。
 
 ## D5：動態頁是 ownership 邊界，固定頁是 layout fragment
 
@@ -470,9 +470,37 @@ D17–D18 的生命週期與 revision 流程見
 
 此行為與 Chrome 的 overflow-anchor: auto 一致。
 
+## D20：分塊參數定案
+
+依 2026-08-17 的 benchmark（`tasks/lay-0002-chunking-parameters-report.md`）：
+
+```text
+leaf_capacity   = 64
+internal_fanout = 32
+merge_low_water = 24
+```
+
+量測的**主要產出不是這三個數字，而是「這三個數字不是瓶頸」**：全部候選設定都通過
+所有硬門檻，最緊的一項仍有 12 倍餘裕，最鬆的有 37 倍。因此後續若出現 frame budget
+問題，**不應回頭調整這三個數字**。
+
+定案依據（延遲無法區分，改用記憶體放大）：
+
+- `leaf ≥ 128` 被 `leaf = 64` 嚴格支配：每次編輯的節點配置數相同（3），但 leaf 大 2–4 倍。
+- `leaf ≤ 32` 每次編輯多配置 33% 的節點（4 vs 3）。
+- `merge_low_water` 必須 `< leaf_capacity / 2`；等於一半時 split／merge 會在同一邊界震盪。
+  取上界內最大值 24，兩個方向各留約 10 次操作的遲滯。
+
+同時確立：文件長度 1,000 → 50,000（50 倍）時打字 p99 僅增為 1.25 倍，
+**證實 FlowSequence 沒有隱藏的線性路徑**。這是 D4 選擇 Chunked B+ tree 而非
+Vector＋Fenwick 的核心主張，現由實測支持而非僅靠設計論證。
+
+未涵蓋：ARM（iPad）平台、長期編輯後的樹稀疏化、併發讀寫。`internal_fanout`
+在 8–32 之間依原則而非量測決定（長文件的深度優勢在 10,000 blocks 時看不出來）。
+
 ## 尚未決定
 
-- Chunked B+ tree 的 leaf 容量、fanout、low-water mark 與 relabel window 數值。
+- LeafKey 的 relabel window 初始大小與目標間距。
 - ObjectStore 的 Record page 容量、page-table fanout 與 compact 門檻。
 - 未量測 Block 的估計高度與第一次開啟超長文件的物化策略。
 - overscan 的單位、範圍與調整策略。

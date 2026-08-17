@@ -87,6 +87,22 @@ if(MSVC)
     target_compile_options(spike4_intrusive_vs_shared PRIVATE /utf-8 /W4 /permissive-)
 endif()
 
+# Benchmark: FlowSequence 分塊參數（LAY-0002「尚未決定」第一項）
+add_executable(bench_flow_sequence
+    bench_flow_sequence/bench_flow_sequence.cpp
+)
+
+target_include_directories(bench_flow_sequence PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/bench_support
+)
+
+target_link_libraries(bench_flow_sequence PRIVATE krepis::krepis)
+
+target_compile_features(bench_flow_sequence PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(bench_flow_sequence PRIVATE /utf-8 /W4 /permissive-)
+endif()
+
 # Spike 3: Submission Boundary Evaluation
 add_executable(spike3_submission_boundary
     spike3_submission_boundary/spike3_main.cpp
