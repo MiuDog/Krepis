@@ -126,6 +126,16 @@ public:
         return total_reclaimed_.load(std::memory_order_relaxed);
     }
 
+    // 目前有多少呼叫者**已進入 shutdown() 並在等待**同一次完成結果。
+    //
+    // 僅供診斷與測試，與 pending()／total_reclaimed() 同級。
+    // 存在的理由是閘門 7／C3 第三輪：驗證「併發呼叫者會等待而非提早返回」時，
+    // 必須能證明呼叫者**確實進入了函式**——在呼叫端自行計數只能證明「抵達呼叫點」，
+    // 那不是同步邊。把等待狀態變成可觀察，才建立得起真正的邊。
+    [[nodiscard]] std::size_t shutdown_waiters() const noexcept {
+        return shutdown_waiters_.load(std::memory_order_acquire);
+    }
+
     [[nodiscard]] bool is_shutdown() const noexcept;
 
 private:
@@ -184,6 +194,8 @@ private:
     // shutdown 是併發冪等的冷路徑：第一個進入者執行完整流程，其餘等待同一次結果。
     std::atomic<bool> shutdown_claimed_{false};
     std::atomic<bool> shutdown_complete_{false};
+    // 已進入等待路徑的呼叫者數。見 shutdown_waiters()。
+    std::atomic<std::size_t> shutdown_waiters_{0};
     std::thread worker_;
 };
 

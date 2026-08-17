@@ -25,8 +25,9 @@ lifetime 與 shutdown drain path」。**這道閘門不接受 AI 自審**——�
 
 ## 第一輪審查結果與修正（2026-08-18）
 
-第一輪判定：**未通過**。8 項要求修改、4 項接受。第二輪已完成技術重審：6 個修正項接受，
-C3 與 E1 仍要求修改，因此 Gate 7 仍未通過。
+第一輪判定：**未通過**。8 項要求修改、4 項接受。第二輪技術重審接受 6 個修正項，
+C3 與 E1 仍要求修改。第三輪已接受 E1；C3 的實作正確，但回歸測試仍缺少一條必要的同步邊，
+因此 Gate 7 仍未通過。
 
 依本檔規則「修完後重審該項，不是直接改判定」，以下保留第一輪意見、實作摘要與第二輪結論，
 讓後續審查者能追溯每次判定的依據。
@@ -59,7 +60,8 @@ C3 與 E1 仍要求修改，因此 Gate 7 仍未通過。
 ### 新增的回歸測試
 
 - `test_derived_type_cannot_shadow_counter`（A1）—— 惡意衍生型別宣告同名 public `retain`／`release`，驗證計數仍走 `RefCounted` 的唯一實作
-- `test_concurrent_shutdown_is_idempotent`（C3）—— 8 個執行緒同時 shutdown，全部正常返回；修正前非首位呼叫者會 `terminate()`
+- `test_concurrent_shutdown_with_forced_overlap`（C3）—— 以阻塞 destructor 延長 shutdown 窗口；
+  第三輪確認它仍未保證所有 caller 已進入 `shutdown()`
 - `test_page_table_grows_beyond_one_level`（E1）—— 跨越深度 1（4,096 slot）與深度 2 邊界
 - `test_deep_tree_cow_isolation`（E1）—— 深樹的短路徑 COW 不影響舊版本
 - raw constructibility 的 `static_assert`（A1）
@@ -500,6 +502,69 @@ Release CI 的 accounting test 提供證據。late enqueue 仍是生命週期違
 
 ---
 
+**第三輪重審：仍要求修改** —— 確認該不精確不可接受，測試缺少一條必要的同步邊。
+
+**回應第三輪意見（2026-08-18）**：**接受批評。我原本的辯解站不住腳。**
+
+我當時的論證是「worker 被擋住使首位 caller 不可能完成，所以不精確無害」。
+但那論證的是**另一件事**——它證明了「首位 caller 沒完成」，
+卻沒有證明「其餘 caller 已經進入函式」。這兩者之間沒有蘊含關係：
+執行緒可能被排程器延後，計數已加而尚未進入 `shutdown()`。
+**在呼叫端自行計數，原理上就建立不起關於被呼叫端的同步邊。**
+
+修法：把「已進入等待路徑」變成**佇列內部可觀察的事實**。
+
+1. `ReclamationQueue` 新增 `shutdown_waiters_` 計數與公開的 `shutdown_waiters()`
+   存取器（診斷用途，與既有的 `pending()`／`total_reclaimed()` 同級）。
+2. 遞增發生在**進入等待分支之後、檢查完成旗標之前**——順序相反的話計數只能表示
+   「即將等待」，同樣建立不起邊。
+3. 測試改為等待 `shutdown_waiters() == 7`。計數到 7 就**證明**這 7 個呼叫者
+   已經在 `shutdown()` 內部的等待路徑上，不再是關於呼叫端的推測。
+4. 另加一條斷言：此刻 `is_shutdown()` 必須為 false——
+   證明等待確實發生在完成**之前**，而不是完成後才排隊。
+
+**鑑別力**：舊實作下這 7 個呼叫者會走到 `std::terminate()`，
+`shutdown_waiters()` 永遠到不了 7，測試會掛死或崩潰而非誤判通過。
+
+**驗證**：Release 連續重複執行 20 次全數通過。
+
+**這次的教訓值得記下**：我第一次修 C3 時已經自己發現並聲明了這個不精確，
+卻用「不影響結論」把它帶過去。**主動聲明缺陷不等於修掉缺陷**——
+聲明只是讓審查者能看見它，責任並沒有因此轉移。
+
+**第三輪重審（2026-08-18）**：**仍要求修改。實作接受，測試證據不接受。**
+
+阻塞 worker 只保證「已進入 `shutdown()` 的首位 caller 無法完成」，沒有保證任何 caller 已經跨過
+`shutdown()` 的函式邊界。`reached.fetch_add(1)` 與函式呼叫之間仍可被排程器暫停。合法反例如下：
+
+1. caller 1 到 caller 8 各自執行 `reached.fetch_add(1)`，隨即在呼叫 `shutdown()` 前被暫停。
+2. 主執行緒觀察到 `reached == 8`，放行 `blocking_gate_open`。
+3. worker 完成 destructor；此時仍沒有任何 caller 宣告 shutdown。
+4. caller 1 完整執行舊版 shutdown 並進入 `stopped`。
+5. caller 2 到 caller 8 才進入舊版 shutdown，看到 `stopped` 後安靜返回。
+
+因此舊實作仍存在一條讓測試通過的合法排程，文件中「舊實作下 caller 2–8 必定觀察到
+`stopping`」的鑑別力主張不成立。Debug／Release 各重複 100 次通過只能證明常見排程，不能建立
+缺少的 happens-before 關係。
+
+```mermaid
+flowchart LR
+    C["8 個 caller：reached++"] --> P["可能在函式呼叫前被暫停"]
+    P --> M["主執行緒看到 reached == 8"]
+    M --> O["放行 worker destructor"]
+    O --> W["worker 可完成"]
+    W --> F["caller 1 才進入並完成舊版 shutdown"]
+    F --> S["caller 2–8 看到 stopped 後返回"]
+    S --> X["舊版錯誤地通過測試"]
+```
+
+**建議修正**：加入只供測試使用的觀測點，讓測試能等待「一位 caller 已取得 shutdown claim，
+至少另一位 caller 已進入等待分支」後才放行 worker。這兩個事件必須由 `shutdown()` 內部發布，
+不能再用函式外的 pre-call counter 近似。未採用單純增加執行緒數、重複次數或 sleep，因為它們只提高
+撞到競態的機率，仍無法排除上述合法排程。
+
+---
+
 ## D. borrowed pointer lifetime
 
 ### D1. `TreeCursor` 的借用不變條件
@@ -657,6 +722,20 @@ capacity 與公開 API 的實際可定址範圍一致。
 卻在 `LocationIndex` 門口退化成裸整數，呼叫端被迫寫 `.value` 解包——
 **型別安全在最需要它的交界處被丟掉**，而那正是 D14 指定索引鍵為 ObjectSlot 的用意。
 
+**第三輪重審（2026-08-18）**：**接受。**
+
+- `lookup`／`set`／`clear` 的公開邊界已改收 `ObjectSlot`，搜尋全部 C++ 呼叫端後未發現以 `.value`
+  解包再呼叫 LocationIndex 的旁路。
+- `ObjectSlot` 為 32-bit 且保留 `0xFFFFFFFF` 為 invalid，最大可配置值是 `0xFFFFFFFE`；以 fanout 64、
+  page capacity 64 計算，實際樹深有界，不會走到 64-bit `size_t` 的溢位深度。
+- `LocationIndex` 與 `ObjectStoreSnapshot` 的容量乘法都採 `saturating_mul`，即使未來前提改變也不會
+  靜默迴繞為 0。
+- 具體例子：最大 slot `4,294,967,294` 寫入後，`capacity()` 仍大於該值且不為 0；
+  `saturating_mul(SIZE_MAX, 2)` 回傳 `SIZE_MAX`。
+
+未採用「保留 `std::size_t`、只補範圍檢查」：那會讓每個 caller 都能再次忘記 ObjectSlot 的
+generation／有效性語意。以型別封閉邊界是全局較強的不變條件。
+
 ---
 
 ## 審查完成後
@@ -688,3 +767,15 @@ capacity 與公開 API 的實際可定址範圍一致。
 
 第一輪接受的 B2、C1、D1 與疑點 2 未重新開案；疑點 1 已在本輪接受，因此 C1 的 packed gate
 前提已閉合。
+
+### 第三輪（2026-08-18）
+
+- 審查者：Codex 技術重審（**不是人類最終簽核**）
+- 驗證：MSVC Debug 11/11、Release 11/11；`intrusive_ptr` 與 `location_index` 在 Debug／Release
+  各重複 100 次通過（每種組態共 200 次關鍵測試執行）
+- E1：**接受** —— ObjectSlot 型別邊界、32-bit 深度上限與飽和容量運算均成立
+- C3：**要求修改** —— shutdown 實作成立，但測試的 counter 位於函式呼叫前，仍未強制 caller
+  在放行 worker 前進入 shutdown
+- 結論：**未通過（11/12 接受）**。只剩 C3 的 deterministic concurrency regression test；
+  不需要重改 shutdown 演算法
+- 未查證：本機沒有 clang，ASan／TSan 結果仍待 CI（屬閘門 5，不列為 Gate 7 的剩餘項）

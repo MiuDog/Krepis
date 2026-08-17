@@ -338,27 +338,33 @@ void test_concurrent_shutdown_with_forced_overlap() {
 
     // 2. 8 個執行緒同時呼叫 shutdown。首位必定卡在 join()。
     constexpr int caller_count = 8;
-    std::atomic<int> reached{0};
+    constexpr std::size_t expected_waiters = caller_count - 1;  // 首位是執行者，不等待
     std::atomic<int> returned{0};
     std::vector<std::thread> callers;
     callers.reserve(caller_count);
 
     for (int i = 0; i < caller_count; ++i) {
-        callers.emplace_back([&reached, &returned] {
-            reached.fetch_add(1);
-            reached.notify_all();
+        callers.emplace_back([&returned] {
             shutdown_default_reclamation_queue();
             returned.fetch_add(1);
         });
     }
 
-    // 3. 等到全部 caller 都抵達呼叫點。worker 仍被 gate 擋住，
-    //    因此**不可能**有任何 caller 已完成 shutdown——這正是前一版缺少的保證。
-    int arrived = reached.load();
-    while (arrived < caller_count) {
-        reached.wait(arrived);
-        arrived = reached.load();
+    // 3. 等到 7 個 caller **確實進入 shutdown() 的等待路徑**。
+    //
+    //    這是第三輪要求的同步邊。前一版在呼叫端自行計數，只能證明
+    //    「抵達呼叫點」——執行緒可能還沒進入函式。改為觀察佇列內部的
+    //    waiter 計數後，計數到 7 就**證明**這 7 個呼叫者已經在函式裡等待。
+    //
+    //    舊實作下它們會走到 std::terminate()，計數永遠到不了 7，測試會掛死或崩潰。
+    while (default_reclamation_queue().shutdown_waiters() < expected_waiters) {
+        std::this_thread::yield();
     }
+
+    expect(default_reclamation_queue().shutdown_waiters() == expected_waiters,
+           "7 個非首位 caller 確實進入 shutdown 的等待路徑");
+    expect(!default_reclamation_queue().is_shutdown(),
+           "此刻 worker 仍被阻塞，shutdown 尚未完成——證明等待確實發生在完成之前");
 
     // 4. 放行，讓 worker 收尾並使 join() 返回。
     blocking_gate_open.store(true, std::memory_order_release);

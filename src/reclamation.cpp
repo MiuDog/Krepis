@@ -190,9 +190,17 @@ void ReclamationQueue::shutdown() noexcept {
     if (!shutdown_claimed_.compare_exchange_strong(expected_claim, true,
                                                    std::memory_order_acq_rel,
                                                    std::memory_order_acquire)) {
+        // 登記「已進入等待路徑」**在檢查完成旗標之前**——
+        // 順序相反的話，計數只能證明「即將等待」，建立不起同步邊（閘門 7／C3 第三輪）。
+        shutdown_waiters_.fetch_add(1, std::memory_order_acq_rel);
+        shutdown_waiters_.notify_all();
+
         while (!shutdown_complete_.load(std::memory_order_acquire)) {
             shutdown_complete_.wait(false, std::memory_order_acquire);
         }
+
+        shutdown_waiters_.fetch_sub(1, std::memory_order_acq_rel);
+        shutdown_waiters_.notify_all();
         return;
     }
 
