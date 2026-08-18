@@ -1,5 +1,15 @@
 # Spikes 建置配置
 
+# Spike 1／2 依賴 DirectWrite 與 <windows.h>，**只能在 Windows 建置**。
+#
+# 未加此保護前，Linux 建置會在 spike1_shaper.cpp 的 `#include <windows.h>` 失敗，
+# 連帶使整個 build 中止——包含與 Windows 無關的核心測試。
+# 這個缺陷是 2026-08-18 在 WSL 跑閘門 5 的 sanitizer 時才暴露：
+# CI 的 Linux job 早就會撞到，只是 CI 從未實際執行過（受 GitHub 帳務阻塞）。
+#
+# **教訓：沒跑過的 CI 設定等於沒有 CI 設定。**
+if(WIN32)
+
 # Spike 1: DirectWrite Shaper
 add_executable(spike1_directwrite
     spike1_directwrite/spike1_shaper.cpp
@@ -74,6 +84,10 @@ target_compile_features(spike2_scaling_test PRIVATE cxx_std_20)
 if(MSVC)
     target_compile_options(spike2_scaling_test PRIVATE /utf-8 /W4 /permissive-)
 endif()
+
+endif()  # WIN32 —— Spike 1／2 的 Windows 專屬區段到此結束
+
+# 以下皆為跨平台，不受上方 WIN32 保護限制。
 
 # Spike 4: IntrusivePtr vs std::shared_ptr benchmark（LAY-0002 D17 gate 6）
 add_executable(spike4_intrusive_vs_shared

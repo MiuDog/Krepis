@@ -11,7 +11,25 @@ ReclamationQueue::~ReclamationQueue() {
 }
 
 void RefCounted::release() const noexcept {
-    const std::uint32_t previous = count_.fetch_sub(1, std::memory_order_release);
+    // **為何是 acq_rel 而不是 release ＋ 條件式 acquire fence（閘門 5，2026-08-18）**
+    //
+    // 原本採用教科書寫法：`fetch_sub(release)`，只有最後一個擁有者才執行
+    // `atomic_thread_fence(acquire)`，避免每次 release 都付 acquire 成本。
+    // 該寫法的正確性成立——同步邊經由 enqueue 的 `head_` release CAS
+    // 與 worker 的 acquire exchange 建立。
+    //
+    // 但 **ThreadSanitizer 不模型化 standalone fence**，因此看不到那條邊，
+    // 對每一個「主執行緒 release、worker 銷毀」的節點都回報 data race。
+    // 實測：改為 acq_rel 後 TSan 由 2 個測試失敗變為 11/11 零診斷。
+    //
+    // 取捨：保留 fence 寫法，則 TSan 在**整條引用計數路徑上失去偵測能力**——
+    // 要嘛淹沒在假陽性裡，要嘛加抑制規則而連同真競態一起遮蔽。
+    // 閘門 5 要求的是競態證據，一個工具驗證不了的路徑等於沒有證據。
+    //
+    // 成本：x86 上 `lock xadd` 本身即為完整屏障，acq_rel 與 release **編譯結果相同**；
+    // ARM（iPad）上多一次 acquire（`ldaxr` vs `stlxr`）。Spike 4 已證實
+    // 引用計數不是瓶頸，且此成本只在遞減路徑。**以可驗證性換取該成本是划算的。**
+    const std::uint32_t previous = count_.fetch_sub(1, std::memory_order_acq_rel);
     require_lifetime(previous != 0, "對計數為零的節點 release（underflow）");
     require_lifetime(previous != poisoned, "對已釋放（毒化）的節點再次 release");
 
@@ -19,9 +37,8 @@ void RefCounted::release() const noexcept {
         return;
     }
 
-    // 此時本執行緒是唯一擁有者。acquire fence 使先前所有執行緒對本物件的寫入
-    // 在銷毀前對本執行緒可見（D17 的 release／acquire 配對）。
-    std::atomic_thread_fence(std::memory_order_acquire);
+    // 此處不再需要 acquire fence：上方的 acq_rel 已使先前所有執行緒對本物件的寫入
+    // 在本執行緒可見。保留 fence 會是死碼，且會讓讀者誤以為 acq_rel 不夠。
 
     // 毒化計數。**這是診斷輔助而非正確性保證**：非法 retain 仍可能在本 store
     // 進入 modification order 之前完成遞增。真正的保證來自 IntrusivePtr 的封裝。

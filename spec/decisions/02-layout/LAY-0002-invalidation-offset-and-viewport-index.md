@@ -4,9 +4,9 @@
 
 **Proposed**（D1–D20 已接受；完整失效規則待決）
 
-> **D17 的強制閘門尚未全部關閉**：閘門 7（人工審查）已於 2026-08-18 通過（12/12，簽核者 Chiayu），
-> 但**閘門 5（ASan／TSan）仍未執行**——CI 已配置，只差推上 GitHub 跑一次。
-> 見本檔 D17 的「閘門狀態」節。**依賴 D17 的實作可以繼續，但 D17 的偏離尚未完成驗證。**
+> **D17 的七道強制閘門已全部關閉（2026-08-18）。** 閘門 7（人工審查）12/12 接受、
+> 簽核者 Chiayu；閘門 5（ASan／TSan）於 WSL ＋ GCC 13.3 執行，兩種 sanitizer 各 11/11 零診斷。
+> **D17 對 `std::shared_ptr` 的偏離至此完成驗證。** 見本檔 D17 的「閘門狀態」節。
 
 ## 日期
 
@@ -445,11 +445,56 @@ custom deleter——使用 custom deleter 必須改為 `std::shared_ptr<T>(new T
 | 2 | 通過 | `test_concurrent_retain_release`、`test_concurrent_enqueue_and_background_drain` |
 | 3 | 通過 | `test_snapshot_parallel_traversal` |
 | 4 | 通過 | `test_destruction_runs_on_reclamation_worker` |
-| 5 | **未執行（外部阻塞）** | 見下 |
+| 5 | **通過**（2026-08-18） | WSL Ubuntu 24.04 ＋ GCC 13.3：ASan+UBSan 與 TSan 各 11/11、零診斷。見下 |
 | 6 | 通過 | Spike 4（2026-08-17） |
 | 7 | **通過**（2026-08-18） | 四輪人工審查 12/12 接受；簽核者 Chiayu。見下 |
 
-### 閘門 5：未執行，被 GitHub 帳務阻塞（2026-08-18）
+### 閘門 5：通過（2026-08-18，WSL ＋ GCC）
+
+執行方式：`bash scripts/run-sanitizers.sh`（WSL Ubuntu 24.04、GCC 13.3.0）。
+GCC 相對 MSVC 即為本閘門要求的「第二工具鏈」，其 ASan／TSan 與 LLVM 同源。
+
+| 組態 | 結果 |
+|---|---|
+| ASan ＋ UBSan（`-fno-sanitize-recover=all`） | 11/11，零診斷 |
+| TSan | 11/11，零診斷 |
+
+**閘門 5 實際攔下三個問題，全都是本機 MSVC 看不到的：**
+
+**1. `RandomSource` 在非 Windows 平台未實作** —— `id_generator` 直接 `abort`。
+原本標記為「該平台工作展開時補上」，但跨平台已是硬需求，而 ObjectId 生成是最基礎的操作。
+已補上 POSIX（`getrandom` ＋ `/dev/urandom` 退路，處理 EINTR 與部分填充）
+與 BSD／Apple（`arc4random_buf`）實作。**部分填充必須視為失敗**——
+熵不足的 ObjectId 會靜默破壞身分唯一性。
+
+**2. Spike 1／2 未以 `if(WIN32)` 保護** —— Linux 建置在 `#include <windows.h>` 中止，
+連帶使與 Windows 無關的核心測試無法建置。**CI 的 Linux job 早就會撞到，
+只是 CI 從未實際執行過。** 教訓：沒跑過的 CI 設定等於沒有 CI 設定。
+
+**3. `release()` 的 fence 寫法無法被 TSan 驗證** —— 見下節。
+
+### 由閘門 5 觸發的 D17 修正：`release()` 改用 `acq_rel`
+
+原實作為教科書寫法：`fetch_sub(release)` ＋ 只有最後一個擁有者執行
+`atomic_thread_fence(acquire)`。**該寫法的正確性成立**——同步邊經由 enqueue 的
+`head_` release CAS 與 worker 的 acquire exchange 建立。閘門 7／A2 亦已接受此設計。
+
+但 **TSan 不模型化 standalone fence**，因此看不到那條邊，對每個
+「主執行緒 release、worker 銷毀」的節點都回報 data race（2 個測試失敗）。
+改為 `fetch_sub(acq_rel)` 後 TSan 零診斷。
+
+**取捨與裁決**：保留 fence 寫法，則 TSan 在**整條引用計數路徑上失去偵測能力**——
+不是淹沒於假陽性，就是加抑制規則而連真競態一起遮蔽。閘門 5 要求的是競態證據，
+**工具驗證不了的路徑等於沒有證據**。
+
+成本：x86 上 `lock xadd` 本身即為完整屏障，兩者編譯結果相同；ARM（iPad）多一次 acquire。
+Spike 4 已證實引用計數非瓶頸。**以可驗證性換取此成本成立。**
+
+此修改使閘門 7／A2 的理由敘述過時（該項接受的是 fence 寫法），
+但變更方向是**加強排序**，不可能引入新競態；A2 的結論（違約 fail-fast、
+poison 為診斷輔助）不受影響。
+
+### 閘門 5 的歷史：曾被 GitHub 帳務阻塞
 
 CI 已配置於 `.github/workflows/ci.yml`（MSVC ＋ Clang ASan/UBSan ＋ Clang TSan ＋ Linux 文字 spike）。
 2026-08-18 推上 GitHub 後，**四個 job 全部未啟動**：
@@ -503,10 +548,18 @@ CI 已配置於 `.github/workflows/ci.yml`（MSVC ＋ Clang ASan/UBSan ＋ Clang
 ### 對 D17 效力的現況
 
 D17 選用 intrusive refcount 是對原建議（`std::shared_ptr`）的**偏離**，
-七道閘門是該偏離的驗證條件。目前 **6 道通過、閘門 5 未執行**。
+七道閘門是該偏離的驗證條件。**七道全部通過（2026-08-18）**，
+因此此偏離**已完成驗證**，不再是條件性接受。
 
-因此 **此偏離仍屬條件性接受，尚未完成驗證**。關閉閘門 5 只需把 repo 推上 GitHub
-讓既有 CI 跑一次——不是技術問題，是尚未執行。
+兩道人工／工具閘門的價值對比值得留存：
+
+| 閘門 | 抓到什麼 | 其他閘門有抓到嗎 |
+|---|---|---|
+| 7 人工審查 | 死鎖、admission 誤殺、dangling pointer、型別邊界、capacity 歸零 | 否——六道自動化閘門全綠時這五個都活著 |
+| 5 sanitizer | 平台缺實作、建置不可攜、fence 無法被驗證 | 否——人工審查通過後這三個仍在 |
+
+**兩者互補而非重疊**：人工審查抓語意與設計錯誤，sanitizer 抓平台與工具可驗證性。
+任一單獨存在都會漏掉另一類。
 
 ## D18：SnapshotId 分離 content revision 與 storage generation
 

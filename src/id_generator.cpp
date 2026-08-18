@@ -9,6 +9,13 @@
 // bcrypt.h 必須在 windows.h 之後。
 #include <bcrypt.h>
 #pragma comment(lib, "bcrypt.lib")
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#include <cstdlib>  // arc4random_buf
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/random.h>  // getrandom（glibc 2.25+）
+#include <unistd.h>
 #endif
 
 namespace krepis {
@@ -39,13 +46,73 @@ public:
     }
 };
 
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+
+// arc4random_buf 依契約永不失敗、永遠填滿，因此不需要迴圈或錯誤處理。
+class BsdRandomSource final : public RandomSource {
+public:
+    void fill(std::span<std::byte> out) override {
+        if (out.empty()) {
+            return;
+        }
+        ::arc4random_buf(out.data(), out.size());
+    }
+};
+
 #else
 
-// 其他平台的實作於該平台工作展開時補上（見 spec/architecture.md 的平台策略）。
-class UnimplementedRandomSource final : public RandomSource {
+// POSIX（Linux 等）。
+//
+// **必須完整填滿或中止**：部分填充會靜默產生熵不足的 ObjectId，
+// 那比直接失敗危險得多——文件看起來正常，但身分的唯一性保證已經破了（FND-0002 D5）。
+class PosixRandomSource final : public RandomSource {
 public:
-    void fill(std::span<std::byte>) override {
-        abort_on_random_failure("本平台尚未提供 RandomSource 實作");
+    void fill(std::span<std::byte> out) override {
+        if (out.empty()) {
+            return;
+        }
+
+        std::size_t filled = 0;
+        while (filled < out.size()) {
+            // getrandom 可能被信號中斷，也可能只填一部分——兩者都必須迴圈處理。
+            const ssize_t written =
+                ::getrandom(out.data() + filled, out.size() - filled, 0);
+            if (written < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                // 核心太舊或 syscall 不可用時退回 /dev/urandom。
+                fill_from_urandom(out.subspan(filled));
+                return;
+            }
+            filled += static_cast<std::size_t>(written);
+        }
+    }
+
+private:
+    static void fill_from_urandom(std::span<std::byte> out) {
+        const int fd = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
+            abort_on_random_failure("getrandom 與 /dev/urandom 皆不可用");
+        }
+
+        std::size_t filled = 0;
+        while (filled < out.size()) {
+            const ssize_t written = ::read(fd, out.data() + filled, out.size() - filled);
+            if (written < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                ::close(fd);
+                abort_on_random_failure("讀取 /dev/urandom 失敗");
+            }
+            if (written == 0) {
+                ::close(fd);
+                abort_on_random_failure("/dev/urandom 提前 EOF");
+            }
+            filled += static_cast<std::size_t>(written);
+        }
+        ::close(fd);
     }
 };
 
@@ -56,8 +123,10 @@ public:
 RandomSource& platform_random_source() {
 #if defined(_WIN32)
     static WindowsRandomSource source;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    static BsdRandomSource source;
 #else
-    static UnimplementedRandomSource source;
+    static PosixRandomSource source;
 #endif
     return source;
 }
