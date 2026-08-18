@@ -126,6 +126,11 @@ option(KREPIS_BUILD_TEXT_SPIKE "建置 text shaping spike（會下載 HarfBuzz�
 if(KREPIS_BUILD_TEXT_SPIKE)
     include(FetchContent)
 
+    # libunibreak 與 SheenBidi 都是 **C** 函式庫，但本專案的 project() 只宣告 LANGUAGES CXX。
+    # 缺少此行時 configure 會以 `Missing variable is: CMAKE_C_COMPILE_OBJECT` 失敗。
+    # 只在需要時啟用，避免一般建置多做 C 編譯器偵測。
+    enable_language(C)
+
     set(HB_BUILD_SUBSET OFF CACHE BOOL "" FORCE)
     set(HB_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(HB_BUILD_UTILS OFF CACHE BOOL "" FORCE)
@@ -162,9 +167,13 @@ if(KREPIS_BUILD_TEXT_SPIKE)
         GIT_TAG libunibreak_6_1
         GIT_SHALLOW TRUE
     )
-    # 只取原始碼，不 MakeAvailable —— libunibreak **沒有 CMakeLists.txt**（autotools 專案），
-    # 因此必須自行撰寫建置膠水。這是本 spike 記錄的整合成本之一。
-    FetchContent_Populate(libunibreak)
+    # libunibreak **沒有 CMakeLists.txt**（autotools 專案），因此必須自行撰寫建置膠水。
+    # 這是本 spike 記錄的整合成本之一。
+    #
+    # 使用 MakeAvailable 而非 Populate：後者的單引數形式自 CMake 3.30 起棄用（CMP0169），
+    # 在 CI 的 3.31 上會發出警告並在未來版本移除。MakeAvailable 在來源沒有 CMakeLists.txt 時
+    # 只做 populate、不呼叫 add_subdirectory，正好符合這裡的需求。
+    FetchContent_MakeAvailable(libunibreak)
 
     add_library(unibreak STATIC
         ${libunibreak_SOURCE_DIR}/src/eastasianwidthdata.c
@@ -207,7 +216,7 @@ if(KREPIS_BUILD_TEXT_SPIKE)
     # 但 SheenBidi 提供 unity build：SheenBidi.c 在 SB_CONFIG_UNITY 下 include 其餘所有 .c，
     # 因此只需編譯單一檔案——**升級時不必人工同步原始碼清單**，
     # 這一點比 libunibreak 好。
-    FetchContent_Populate(sheenbidi)
+    FetchContent_MakeAvailable(sheenbidi)
 
     add_library(sheenbidi STATIC ${sheenbidi_SOURCE_DIR}/Source/SheenBidi.c)
     target_compile_definitions(sheenbidi PRIVATE SB_CONFIG_UNITY)
