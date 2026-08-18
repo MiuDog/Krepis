@@ -445,9 +445,34 @@ custom deleter——使用 custom deleter 必須改為 `std::shared_ptr<T>(new T
 | 2 | 通過 | `test_concurrent_retain_release`、`test_concurrent_enqueue_and_background_drain` |
 | 3 | 通過 | `test_snapshot_parallel_traversal` |
 | 4 | 通過 | `test_destruction_runs_on_reclamation_worker` |
-| 5 | **未執行** | CI 已配置 MSVC ＋ Clang（ASan／UBSan／TSan）於 `.github/workflows/ci.yml`，但**尚未實跑過**。2026-08-18 查核本機：clang 未安裝、MSVC ASan runtime 亦不存在，**無法本機執行**。關閉此閘門需推上 GitHub 讓 CI 跑一次。依本閘門自身的規定，未取得競態證據前不得視為通過 |
+| 5 | **未執行（外部阻塞）** | 見下 |
 | 6 | 通過 | Spike 4（2026-08-17） |
 | 7 | **通過**（2026-08-18） | 四輪人工審查 12/12 接受；簽核者 Chiayu。見下 |
+
+### 閘門 5：未執行，被 GitHub 帳務阻塞（2026-08-18）
+
+CI 已配置於 `.github/workflows/ci.yml`（MSVC ＋ Clang ASan/UBSan ＋ Clang TSan ＋ Linux 文字 spike）。
+2026-08-18 推上 GitHub 後，**四個 job 全部未啟動**：
+
+> The job was not started because recent account payments have failed or your spending limit
+> needs to be increased.
+
+這是帳戶層級的阻塞，不是設定錯誤，**專案端無法修**。
+
+本機執行的可行性（同日查核）：
+
+| 途徑 | 可行性 |
+|---|---|
+| MSVC ASan | ✗ runtime 未安裝 |
+| Windows ＋ clang ASan | 可行，需安裝 LLVM |
+| Windows ＋ clang **TSan** | **✗ TSan 不支援 Windows**——這正是本閘門要求「第二工具鏈」的原因 |
+| WSL／Linux ＋ clang | ✓ ASan 與 TSan 都可 |
+
+因此閘門 5 的關閉路徑有二：**(a)** 解決 GitHub 帳務讓既有 CI 跑；
+**(b)** 在 WSL 或 Linux 環境本機執行 ASan 與 TSan。
+
+**在取得競態證據前不得視為通過**——本閘門明文禁止以「本機沒有報錯」代替證據，
+而「CI 沒跑」比「本機沒報錯」更不足以作為證據。
 
 ### 閘門 7：通過（2026-08-18）
 
