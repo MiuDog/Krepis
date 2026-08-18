@@ -1,5 +1,39 @@
 # 03-text ～ 07-binding 待決問題彙整
 
+## 裁決結果（2026-08-18，使用者 Chiayu）
+
+| 編號 | 裁決 | 內容 |
+|---|---|---|
+| TXT-1 | **A** | `FontProvider` 介面在 C++，平台只提供字型清單，挑選邏輯只有一份 |
+| TXT-2 | **A＋B** | UAX #14 原始結果 ＋ 抑制 URL／路徑內部斷行 |
+| TXT-3 | **A** | IME composing region 為核心持有的**非權威覆蓋層**：參與版面，不進 ObjectStore／undo |
+| TXT-4 | **A** | shaping 快取鍵 `{內容 hash, 字型集 revision, 字級, script}` ＋ LRU；容量為 benchmark 參數 |
+| EDT-1 | **B** | selection 兩種型別：文字區間 ＋ 空間節點集合。**ink 套索不納入第一版** |
+| EDT-2 | **A** | 單一 `Transaction` 內含多個 typed command，全成功或全拒絕 |
+| EDT-3 | **A** | 每個 command 型別自行宣告可否與前一個合併 |
+| EDT-4 | **A** | **整份文件一條全域 undo 序列**（使用者明確選擇，非預設建議） |
+| ATH-2 | **A** | **現在就做**可丟棄的簡陋檔案格式，讓 Notist 能存檔並開始 dogfood |
+| ATH-3 | 維持 | authority 仍排在最後（由 ATH-2＝A 推得；**若理解有誤請指正**） |
+| BND-1 | **A** | 核心雙緩衝，外殼取得唯讀 span |
+| BND-2 | **A** | command 通道同步。**成立前提是同步路徑 p99 ≤ 3ms 守得住**（LAY-0001） |
+| BND-3 | **A** | display list 帶版本號，不符則拒絕產出並回傳明確錯誤 |
+| BND-4 | **B** | 區分可恢復與不可恢復錯誤 |
+| INK-1～4 | **待決** | 使用者要求先解釋選項；依 README 例外由人類主導 |
+| TXT-5／EDT-5／ATH-1／BND-5 | **不裁決** | 需量測，待對應 benchmark |
+
+### 由裁決推得、需寫進 ADR 的連帶條件
+
+- **EDT-1＝B 使 INK-4＝C 不成立**：ink 套索需要第三種 selection 型別。
+  若之後要 INK-4＝C，必須先重開 EDT-1 並寫明擴充理由。
+- **TXT-3＝A ＋ BND-2＝A 相互支撐**：組字覆蓋層走同步通道，時序最單純。
+  若將來 BND-2 改為非同步，TXT-3 的契約要重新檢查。
+- **EDT-4＝A（全域單序列）與 EDT-2＝A（單層原子 transaction）一致**：
+  跨容器操作是一個 transaction、落在一條序列上，沒有語意破碎。
+- **ATH-2＝A 要求在該格式的決策裡明文寫「此格式將被丟棄」**（README 明文要求），
+  否則會被誤當正式格式沿用。
+
+---
+
 ## 這份文件是什麼
 
 `03-text`、`04-editing`、`05-ink`、`06-authority`、`07-binding` 五個能力目前**都還沒有任何決策**，
