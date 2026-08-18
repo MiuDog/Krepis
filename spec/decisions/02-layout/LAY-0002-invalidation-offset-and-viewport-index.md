@@ -4,7 +4,8 @@
 
 **Proposed**（D1–D20 已接受；完整失效規則待決）
 
-> **D17 的強制閘門尚未全部關閉**：閘門 5（ASan／TSan）未執行、閘門 7（人工審查）未通過。
+> **D17 的強制閘門尚未全部關閉**：閘門 7（人工審查）已於 2026-08-18 通過（12/12，簽核者 Chiayu），
+> 但**閘門 5（ASan／TSan）仍未執行**——CI 已配置，只差推上 GitHub 跑一次。
 > 見本檔 D17 的「閘門狀態」節。**依賴 D17 的實作可以繼續，但 D17 的偏離尚未完成驗證。**
 
 ## 日期
@@ -446,25 +447,41 @@ custom deleter——使用 custom deleter 必須改為 `std::shared_ptr<T>(new T
 | 4 | 通過 | `test_destruction_runs_on_reclamation_worker` |
 | 5 | **未執行** | CI 已配置 MSVC ＋ Clang（ASan／UBSan／TSan）於 `.github/workflows/ci.yml`，但**尚未實跑過**。2026-08-18 查核本機：clang 未安裝、MSVC ASan runtime 亦不存在，**無法本機執行**。關閉此閘門需推上 GitHub 讓 CI 跑一次。依本閘門自身的規定，未取得競態證據前不得視為通過 |
 | 6 | 通過 | Spike 4（2026-08-17） |
-| 7 | **未通過（要求修改）** | 見下 |
+| 7 | **通過**（2026-08-18） | 四輪人工審查 12/12 接受；簽核者 Chiayu。見下 |
 
-**閘門 7 目前為「未通過，要求修改」。**
+### 閘門 7：通過（2026-08-18）
 
-三輪人工審查（`tasks/gate7-memory-order-review-checklist.md`）共 12 項，
-第三輪 11 項接受、1 項（C3）仍要求修改：shutdown 的併發回歸測試缺少一條必要的同步邊。
-該項的修正已實作並提交（`shutdown_waiters()` 使「已進入等待路徑」成為可觀察事實），
-但**尚未經第四輪重審**，因此閘門維持未通過。
+審查記錄於 `tasks/gate7-memory-order-review-checklist.md`（**保留不刪，是通過的證據**）。
+共 12 項、四輪：第一輪 8 項要求修改，第二輪接受 6 項，第三輪接受 E1，第四輪接受 C3，
+最終由專案負責人 **Chiayu** 簽核全部接受。
 
-審查過程中修正的實質缺陷包括：worker 與 `join()` 的永久互等（C2）、
-producer admission 的誤殺窗口（疑點 1）、`TreeCursor` moved-from 的 dangling pointer（疑點 2）、
-`LocationIndex` 的 `ObjectSlot` 型別邊界與 `capacity()` 溢位歸零（E1）。
+技術重審由 Codex 執行、簽核由人類作出、程式碼由 Claude 撰寫——三者為不同主體，
+符合本閘門「不接受自審」的設立目的。
 
-**這對 D17 的效力**：D17 選用 intrusive refcount 的**決策本身**維持成立，
-但它是對原建議（`std::shared_ptr`）的偏離，而閘門正是該偏離的驗證條件。
-在閘門 5 與 7 關閉之前，**此偏離屬於條件性接受，不得視為已完成驗證**。
+**這道閘門攔下了六道自動化閘門全部通過時仍然存在的五個缺陷**：
 
-使用者於 2026-08-18 行政放行後續工作（不阻擋依賴此程式碼的開發），
-**但放行不等於通過**——閘門狀態不因放行而改變。
+| 缺陷 | 性質 |
+|---|---|
+| worker 與 `join()` 永久互等 | 真死鎖，只在特定交錯觸發 |
+| producer admission 誤殺窗口 | 合法 producer 被 `terminate()` |
+| `TreeCursor` moved-from dangling pointer | `is_valid()` 回報 true 卻已無 owner |
+| `LocationIndex` 的 `ObjectSlot` 型別邊界失守 | 型別安全在子系統交界處被丟掉 |
+| `capacity()` 溢位歸零 | `64^11 = 2^66` 取模恰為 0，看起來像空索引 |
+
+五個都是測試抓不到、只能靠逐行閱讀發現的。**這是「人工審查」值得作為獨立閘門的實證依據**，
+而不只是流程要求。
+
+另有一項過程觀察值得留存：C3 連續三輪被打回，**每次都不是實作問題，而是測試證據不足**。
+一個正確的修正配上證明不了它的測試等於沒有修正——將來的回歸不會被擋下，
+而修正者會以為自己有保護。
+
+### 對 D17 效力的現況
+
+D17 選用 intrusive refcount 是對原建議（`std::shared_ptr`）的**偏離**，
+七道閘門是該偏離的驗證條件。目前 **6 道通過、閘門 5 未執行**。
+
+因此 **此偏離仍屬條件性接受，尚未完成驗證**。關閉閘門 5 只需把 repo 推上 GitHub
+讓既有 CI 跑一次——不是技術問題，是尚未執行。
 
 ## D18：SnapshotId 分離 content revision 與 storage generation
 

@@ -23,11 +23,39 @@ lifetime 與 shutdown drain path」。**這道閘門不接受 AI 自審**——�
 
 ---
 
-## 第一輪審查結果與修正（2026-08-18）
+## 最終結果：閘門 7 **通過**（2026-08-18）
 
-第一輪判定：**未通過**。8 項要求修改、4 項接受。第二輪技術重審接受 6 個修正項，
-C3 與 E1 仍要求修改。第三輪已接受 E1；C3 的實作正確，但回歸測試仍缺少一條必要的同步邊，
-因此 Gate 7 仍未通過。
+**12/12 接受，人類簽核完成。**
+
+| 輪次 | 結果 |
+|---|---|
+| 第一輪 | 未通過——8 項要求修改、4 項接受 |
+| 第二輪 | 未通過——6 項修正接受，C3 與 E1 要求修改 |
+| 第三輪 | 未通過（11/12）——E1 接受，C3 的**測試證據**不接受 |
+| 第四輪 | 12/12 技術判定接受 |
+| **人類簽核** | **2026-08-18，使用者（Chiayu）確認全部接受** |
+
+C3 連續三輪被打回，**每一次都不是實作問題，而是測試證據不足**。
+這點值得單獨記住：**一個正確的修正配上證明不了它的測試，等於沒有修正**——
+因為將來的回歸不會被擋下，而修正者會以為自己有保護。
+
+### 這道閘門實際攔下了什麼
+
+五個測試抓不到、只能靠逐行閱讀發現的缺陷：
+
+| 缺陷 | 性質 |
+|---|---|
+| C2：worker 與 `join()` 永久互等 | 真死鎖，只在特定交錯觸發 |
+| 疑點 1：producer admission 誤殺窗口 | 合法 producer 被 `terminate()` |
+| 疑點 2：`TreeCursor` moved-from dangling | `is_valid()` 回報 true 卻無 owner |
+| E1：`ObjectSlot` 型別邊界失守 | 型別安全在子系統交界處被丟掉 |
+| E1：`capacity()` 迴繞成 **0** | `64^11 = 2^66`，取模恰好為零——看起來像空索引 |
+
+**這就是閘門 7 存在的理由。** 六道自動化閘門全部通過的同時，這五個缺陷都活著。
+
+---
+
+## 第一輪審查結果與修正（2026-08-18）
 
 依本檔規則「修完後重審該項，不是直接改判定」，以下保留第一輪意見、實作摘要與第二輪結論，
 讓後續審查者能追溯每次判定的依據。
@@ -461,7 +489,7 @@ if (!state_.compare_exchange_strong(expected, State::stopping, acq_rel, acquire)
    **關機證明（「配置數等於釋放數」）在 Release 建置下還存在嗎？**
    若不存在，D17 要求的證明只在 Debug 成立——**這可接受嗎？**
 
-**判定**：要求修改（第二輪重審，2026-08-18；實作正確、回歸測試仍不足）
+**判定**：**接受**（第四輪重審，2026-08-18；第一輪要求修改、第二／三輪測試證據不足）
 
 **實作**：`shutdown_claimed_`（誰執行）與 `shutdown_complete_`（何時可返回）兩個 flag。
 首位呼叫者送出停止要求、`join()`、執行四項後置檢查，最後設 `shutdown_complete_` 並 `notify_all`；
@@ -532,6 +560,11 @@ Release CI 的 accounting test 提供證據。late enqueue 仍是生命週期違
 卻用「不影響結論」把它帶過去。**主動聲明缺陷不等於修掉缺陷**——
 聲明只是讓審查者能看見它，責任並沒有因此轉移。
 
+**第四輪重審（2026-08-18）**：**接受。** `shutdown_waiters()` 使「已進入等待路徑」成為
+佇列內部可觀察的事實，計數遞增位於進入等待分支之後、檢查完成旗標之前，因此
+「計數達 7」確實蘊含「7 個呼叫者在函式內等待」。附帶的 `is_shutdown() == false`
+斷言另外證明等待發生在完成之前。Release 連續 20 次通過。**本項閉合，閘門 7 全部 12 項接受。**
+
 **第三輪重審（2026-08-18）**：**仍要求修改。實作接受，測試證據不接受。**
 
 阻塞 worker 只保證「已進入 `shutdown()` 的首位 caller 無法完成」，沒有保證任何 caller 已經跨過
@@ -562,6 +595,45 @@ flowchart LR
 至少另一位 caller 已進入等待分支」後才放行 worker。這兩個事件必須由 `shutdown()` 內部發布，
 不能再用函式外的 pre-call counter 近似。未採用單純增加執行緒數、重複次數或 sleep，因為它們只提高
 撞到競態的機率，仍無法排除上述合法排程。
+
+**第四輪重審（2026-08-18）**：**接受。**
+
+`shutdown_waiters_` 的更新點位於 failed-claim 分支內，且先登記、再以 acquire 讀取
+`shutdown_complete_`。測試主執行緒在 worker 仍被 `BlockingNode` 阻塞時讀到 7，能推出：
+
+1. 一位 caller 已成功取得 `shutdown_claimed_`，成為唯一 shutdown 執行者。
+2. 其餘 7 位 caller 均已跨過 `shutdown()` 函式邊界、failed claim，並完成 waiter 登記。
+3. `blocking_gate_open` 尚未發布，因此首位 caller 不可能完成 `join()`，`shutdown_complete_`
+   也不可能成為 true；此時 waiter 尚不會遞減。
+4. 只有主執行緒觀察到上述狀態後才放行 worker。完整 shutdown 結束後以 release 發布 complete，
+   7 位 waiter 的 acquire load／wait 才能返回，並各自恰好遞減一次。
+
+```mermaid
+sequenceDiagram
+    participant Main as "test main"
+    participant Owner as "claim owner"
+    participant Waiters as "7 waiting callers"
+    participant Queue as "ReclamationQueue"
+    participant Worker as "reclamation worker"
+    Main->>Worker: "BlockingNode 關閉 gate"
+    Owner->>Queue: "shutdown_claimed_ CAS 成功"
+    Owner->>Worker: "join() 等待"
+    Waiters->>Queue: "CAS 失敗；shutdown_waiters_.fetch_add"
+    Main->>Queue: "acquire load == 7；is_shutdown == false"
+    Main->>Worker: "blocking_gate_open.store(release)"
+    Worker-->>Queue: "完成 drain 並進入 stopped"
+    Queue-->>Waiters: "shutdown_complete_.store(release) + notify_all"
+    Waiters-->>Queue: "acquire 返回；各自 fetch_sub"
+```
+
+這個測試現在具備鑑別力：舊演算法會讓 failed-claim caller 在 `stopping` 狀態終止程序，無法形成
+7 個已登記 waiter；修正版則必須讓 7 位 caller 等待同一個完成結果。Debug／Release 全套皆為
+11/11，且 `intrusive_ptr` 在兩種組態各重複 100 次通過。
+
+**非阻擋語意註記**：一般情況下，已完成 shutdown 後才進入的 caller 可能在「登記」與讀到
+`shutdown_complete_ == true` 之間短暫計入 `shutdown_waiters()`。因此它精確表示「已登記進入等待
+路徑」，不保證取樣瞬間一定阻塞在 `atomic::wait`。本測試另以 worker gate 與 `is_shutdown == false`
+排除該短暫窗口，故不影響 C3 證明。
 
 ---
 
@@ -779,3 +851,29 @@ generation／有效性語意。以型別封閉邊界是全局較強的不變條�
 - 結論：**未通過（11/12 接受）**。只剩 C3 的 deterministic concurrency regression test；
   不需要重改 shutdown 演算法
 - 未查證：本機沒有 clang，ASan／TSan 結果仍待 CI（屬閘門 5，不列為 Gate 7 的剩餘項）
+
+### 第四輪（2026-08-18）
+
+- 審查者：Codex 技術重審（**不是人類最終簽核**）
+- 審查範圍：C3 的 `shutdown_waiters_` 登記點、memory order、測試同步邊與舊實作鑑別力
+- 驗證：MSVC Debug 11/11、Release 11/11；`intrusive_ptr` Debug／Release 各重複 100 次通過
+- C3：**接受** —— 7 個非首位 caller 的登記發生在 `shutdown()` 內，且測試在放行 worker 前
+  觀察到完整 waiter 數與未完成狀態
+- 技術結論：**12/12 接受，沒有剩餘要求修改項**
+- 正式狀態：**等待人類最終簽核**；本輪不代替人類把 Gate 7 標為正式通過
+- 未查證：ASan／TSan 仍待 GitHub CI（屬 Gate 5，不影響本輪 C3 技術判定）
+
+### 人類最終簽核（2026-08-18）
+
+- 簽核者：**Chiayu**（專案負責人）
+- 裁決：**全部接受** —— 12/12
+- **閘門 7 正式通過並關閉。**
+
+四輪技術重審由 Codex 執行，最終簽核由人類作出——符合本文件開頭「這道閘門不接受 AI 自審」
+的規則：寫程式碼的人（Claude）不是審查者，執行技術重審的 AI 也不是簽核者。
+
+### 閘門 7 通過，但 D17 尚未全部關閉
+
+**閘門 5（ASan／TSan）仍為未執行。** 本機無 clang、亦無 MSVC ASan runtime，
+必須推上 GitHub 讓 CI 實跑。在閘門 5 關閉前，D17 對 `std::shared_ptr` 的偏離
+仍屬條件性接受。**閘門 7 通過不代表 D17 驗證完成。**

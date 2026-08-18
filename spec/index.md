@@ -79,4 +79,4 @@ decisions/<NN-能力>/<代碼>-NNNN-kebab-case-主題.md
 | [DOC-0001](decisions/01-document/DOC-0001-object-tree-stable-id-reference-and-composition.md) | Accepted | 物件樹、stable ID、即時引用與組字疊加層 |
 | [DOC-0002](decisions/01-document/DOC-0002-object-id-representation-and-generation.md) | Accepted | ObjectId 的位元表示、強型別包裝、生成與正規編碼 |
 | [LAY-0001](decisions/02-layout/LAY-0001-sync-background-split-and-frame-budget.md) | Accepted | 同步／背景的分工線與一幀預算；P0 實測通過 |
-| [LAY-0002](decisions/02-layout/LAY-0002-invalidation-offset-and-viewport-index.md) | **Proposed**（D1–D20 已接受） | 失效傳播、偏移與可見範圍索引；分塊參數已定案，失效傳播規則待決。**D17 閘門 5／7 未關閉** |
+| [LAY-0002](decisions/02-layout/LAY-0002-invalidation-offset-and-viewport-index.md) | **Proposed**（D1–D20 已接受） | 失效傳播、偏移與可見範圍索引；分塊參數已定案，失效傳播規則待決。**D17 閘門 7 已通過（2026-08-18）；閘門 5（ASan／TSan）未執行** |
