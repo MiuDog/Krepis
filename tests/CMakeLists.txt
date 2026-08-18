@@ -33,6 +33,9 @@ add_test(NAME krepis.leaf_key COMMAND krepis_leaf_key_test)
 krepis_add_test(krepis_intrusive_ptr_test intrusive_ptr_test.cpp)
 add_test(NAME krepis.intrusive_ptr COMMAND krepis_intrusive_ptr_test)
 
+krepis_add_test(krepis_ink_types_test ink_types_test.cpp)
+add_test(NAME krepis.ink_types COMMAND krepis_ink_types_test)
+
 krepis_add_test(krepis_document_revision_test document_revision_test.cpp)
 add_test(NAME krepis.document_revision COMMAND krepis_document_revision_test)
 

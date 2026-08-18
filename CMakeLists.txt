@@ -39,6 +39,7 @@ target_sources(krepis PRIVATE
     src/location_index.cpp
     src/flow_sequence.cpp
     src/id_generator.cpp
+    src/ink_types.cpp
     src/leaf_key.cpp
     src/object_id.cpp
     src/reclamation.cpp

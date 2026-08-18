@@ -103,11 +103,15 @@ struct PageTag;
 struct ContainerTag;
 struct BlockTag;
 struct EmbedTag;
+struct InkStrokeTag;
+struct BrushTag;
 
 using PageId = TypedObjectId<PageTag>;
 using ContainerId = TypedObjectId<ContainerTag>;
 using BlockId = TypedObjectId<BlockTag>;
 using EmbedId = TypedObjectId<EmbedTag>;
+using InkStrokeId = TypedObjectId<InkStrokeTag>;
+using BrushId = TypedObjectId<BrushTag>;
 
 }  // namespace krepis
 
