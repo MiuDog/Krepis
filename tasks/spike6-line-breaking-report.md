@@ -137,4 +137,7 @@ URL 測試顯示 libunibreak 在 `//` 與 `/` 之後給出斷點。**這符合 U
 - Windows 11、MSVC Release
 - libunibreak 6.1（`libunibreak_6_1` tag）
 - 量測日期：2026-08-18
-- 未在 Linux／iPad 驗證——應併入 CI 的 Linux job
+- ~~未在 Linux 驗證~~ → **已驗證（2026-08-18）**：CI 的 `text-spikes-linux` job 通過，
+  且 Linux 的 CJK 禁則斷點位置 `[2,5,8,11,14,17,23,26,29,32,35]` 與 Windows **完全相同**。
+  **逐位元組一致才是「不會靜默分岔」的具體證據**，而不是「兩邊都沒報錯」。
+- iPad／ARM 仍未驗證

@@ -143,8 +143,8 @@ extern "C" {
 
 ## 尚未涵蓋
 
-- **ARM（iPad）與 Linux 未實測**——三個 spike 都只在 Windows/MSVC 驗證，
-  而跨平台正是整個選型的前提。應併入 CI（見同批的 CI 工作項）。
+- ~~Linux 未實測~~ → **已驗證（2026-08-18）**：CI 的 `text-spikes-linux` job
+  建置並執行三個 spike 全數通過。**ARM（iPad）仍未驗證。**
 - 未測效能：shaping 與斷行的延遲尚未進入 frame budget 的核算。
 - 未測記憶體：三個函式庫的 Unicode 資料表常駐大小未量。
 

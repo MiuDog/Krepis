@@ -459,6 +459,11 @@ GCC 相對 MSVC 即為本閘門要求的「第二工具鏈」，其 ASan／TSan 
 | ASan ＋ UBSan（`-fno-sanitize-recover=all`） | 11/11，零診斷 |
 | TSan | 11/11，零診斷 |
 
+**兩份獨立證據**：除本機 WSL ＋ GCC 外，GitHub Actions 的 `clang-asan` 與 `clang-tsan`
+兩個 job 亦於 2026-08-18 全綠（run 32094011780）。
+**不同工具鏈（GCC／Clang）、不同環境（WSL／CI runner）得到相同結果**，
+排除了單一環境的偶然性。
+
 **閘門 5 實際攔下三個問題，全都是本機 MSVC 看不到的：**
 
 **1. `RandomSource` 在非 Windows 平台未實作** —— `id_generator` 直接 `abort`。

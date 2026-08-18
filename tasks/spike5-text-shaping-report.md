@@ -182,5 +182,5 @@ Font fallback 需要：列舉系統字型、查詢字型的 cmap 涵蓋範圍、
 - Windows 11、MSVC Release
 - HarfBuzz 10.1.0
 - 量測日期：2026-08-17
-- 未在 Linux／iPad 上驗證——**跨平台是本 spike 的前提，卻尚未實測**，
-  應在 CI（已有 Linux job）加入本 spike 以消除這個缺口。
+- ~~未在 Linux 上驗證~~ → **已驗證（2026-08-18）**：CI 的 `text-spikes-linux` job
+  以 DejaVu 字型執行通過。**iPad／ARM 仍未驗證**——那是目前跨平台前提中唯一剩下的缺口。
