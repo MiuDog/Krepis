@@ -4,6 +4,9 @@
 
 **Proposed**（D1–D20 已接受；完整失效規則待決）
 
+> **D17 的強制閘門尚未全部關閉**：閘門 5（ASan／TSan）未執行、閘門 7（人工審查）未通過。
+> 見本檔 D17 的「閘門狀態」節。**依賴 D17 的實作可以繼續，但 D17 的偏離尚未完成驗證。**
+
 ## 日期
 
 - 提出：2026-08-16
@@ -432,6 +435,36 @@ custom deleter——使用 custom deleter 必須改為 `std::shared_ptr<T>(new T
 6. ~~與 `std::shared_ptr` 基準比較~~ → **已完成**（Spike 4, 2026-08-17）。效能無優勢，
    理由已改為架構需求。
 7. 人工逐行審查所有 memory order、owning edge、borrowed pointer lifetime 與 shutdown drain path。
+
+### 閘門狀態（2026-08-18）
+
+| 閘門 | 狀態 | 證據 |
+|---|---|---|
+| 1 | 通過 | `krepis.intrusive_ptr` |
+| 2 | 通過 | `test_concurrent_retain_release`、`test_concurrent_enqueue_and_background_drain` |
+| 3 | 通過 | `test_snapshot_parallel_traversal` |
+| 4 | 通過 | `test_destruction_runs_on_reclamation_worker` |
+| 5 | **未執行** | CI 已配置 MSVC ＋ Clang（ASan／UBSan／TSan）於 `.github/workflows/ci.yml`，但**尚未實跑過**。2026-08-18 查核本機：clang 未安裝、MSVC ASan runtime 亦不存在，**無法本機執行**。關閉此閘門需推上 GitHub 讓 CI 跑一次。依本閘門自身的規定，未取得競態證據前不得視為通過 |
+| 6 | 通過 | Spike 4（2026-08-17） |
+| 7 | **未通過（要求修改）** | 見下 |
+
+**閘門 7 目前為「未通過，要求修改」。**
+
+三輪人工審查（`tasks/gate7-memory-order-review-checklist.md`）共 12 項，
+第三輪 11 項接受、1 項（C3）仍要求修改：shutdown 的併發回歸測試缺少一條必要的同步邊。
+該項的修正已實作並提交（`shutdown_waiters()` 使「已進入等待路徑」成為可觀察事實），
+但**尚未經第四輪重審**，因此閘門維持未通過。
+
+審查過程中修正的實質缺陷包括：worker 與 `join()` 的永久互等（C2）、
+producer admission 的誤殺窗口（疑點 1）、`TreeCursor` moved-from 的 dangling pointer（疑點 2）、
+`LocationIndex` 的 `ObjectSlot` 型別邊界與 `capacity()` 溢位歸零（E1）。
+
+**這對 D17 的效力**：D17 選用 intrusive refcount 的**決策本身**維持成立，
+但它是對原建議（`std::shared_ptr`）的偏離，而閘門正是該偏離的驗證條件。
+在閘門 5 與 7 關閉之前，**此偏離屬於條件性接受，不得視為已完成驗證**。
+
+使用者於 2026-08-18 行政放行後續工作（不阻擋依賴此程式碼的開發），
+**但放行不等於通過**——閘門狀態不因放行而改變。
 
 ## D18：SnapshotId 分離 content revision 與 storage generation
 
