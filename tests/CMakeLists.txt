@@ -74,5 +74,11 @@ add_test(NAME krepis.text_layout COMMAND krepis_text_layout_test)
 krepis_add_test(krepis_transaction_test transaction_test.cpp)
 add_test(NAME krepis.transaction COMMAND krepis_transaction_test)
 
+krepis_add_test(krepis_editing_test editing_test.cpp)
+add_test(NAME krepis.editing COMMAND krepis_editing_test)
+
+krepis_add_test(krepis_editing_session_test editing_session_test.cpp)
+add_test(NAME krepis.editing_session COMMAND krepis_editing_session_test)
+
 krepis_add_test(krepis_layout_invalidation_test layout_invalidation_test.cpp)
 add_test(NAME krepis.layout_invalidation COMMAND krepis_layout_invalidation_test)

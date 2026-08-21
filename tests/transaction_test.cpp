@@ -127,6 +127,34 @@ void test_stale_base_invalid_utf8_and_empty_transaction_are_rejected() {
 	expect(!empty_result.is_ok(), "空 Transaction 拒絕");
 }
 
+void test_range_replace_uses_grapheme_boundaries_and_reports_effect() {
+	auto base = with_paragraph(
+		DocumentRevision::initial(),
+		make_block(1),
+		"A cafe\xCC\x81 Z"
+	);
+	const auto base_revision = base.snapshot_id().content_revision;
+	Transaction transaction(base_revision);
+	// Grapheme 2..6 是 cafe + combining acute；不得以 byte offset 拆 combining mark。
+	transaction.replace_paragraph_range(make_block(1), 2, 6, "X");
+	auto result = transaction.commit(base);
+	expect(result.is_ok(), "grapheme range replacement 可提交");
+	if (!result.is_ok()) return;
+	expect(paragraph_for(result.value().revision, make_block(1))->utf8() == "A X Z",
+	       "range replacement 以 grapheme boundary 取代完整 combining sequence");
+	expect(result.value().text_edit_effects.size() == 1, "commit 回傳一筆 anchor transformation effect");
+	if (!result.value().text_edit_effects.empty()) {
+		const auto& effect = result.value().text_edit_effects.front();
+		expect(effect.replaced_grapheme_start == 2 && effect.replaced_grapheme_end == 6 &&
+		           effect.inserted_grapheme_count == 1,
+		       "effect 保存舊 range 與新 grapheme 數");
+	}
+
+	Transaction out_of_range(base_revision);
+	out_of_range.replace_paragraph_range(make_block(1), 2, 99, "X");
+	expect(!out_of_range.commit(base).is_ok(), "超出 grapheme 數的 range fail closed");
+}
+
 }  // namespace
 
 int main() {
@@ -134,6 +162,7 @@ int main() {
 	test_missing_target_rejects_every_command();
 	test_non_paragraph_and_duplicate_targets_are_rejected();
 	test_stale_base_invalid_utf8_and_empty_transaction_are_rejected();
+	test_range_replace_uses_grapheme_boundaries_and_reports_effect();
 
 	shutdown_default_reclamation_queue();
 	return krepis_test::report("krepis.transaction");
