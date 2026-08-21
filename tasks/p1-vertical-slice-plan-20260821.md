@@ -13,7 +13,7 @@ Notist 一旦能實際使用 Flow 文字與 IME，立即加入可丟棄的本機
 | 0. 封存目前成果並恢復完整驗證 | ✅ 完成 | 三個基線提交；PR #1 的 MSVC、ASan、TSan、Linux text spikes 全綠 |
 | 1. `LeafKey` 局部 relabel | ✅ 完成 | `f545fee`；100k 三模式 gate、原子 locator、stale root、舊 snapshot 與 benchmark |
 | 2. 正式文字 layout | ✅ 完成 | 19/19 Debug；Release p99 0.050 ms；CI `32495083712` 四個 job 全綠 |
-| 3. Flow 編輯、IME、selection、undo | **核心完成；待 C ABI 後接 Notist** | anchor、overlay、typed global undo、行首／中／行尾 split 與 merge 原子 undo 已完成 |
+| 3. Flow 編輯、IME、selection、undo | **核心垂直路徑完成；待 Dart** | `FlowEditor` 串接 authority、typed undo、composition、viewport layout 與 display；30/30 tests |
 | 4. Q1=A 暫時持久化 | **核心完成；待 Notist reopen smoke** | DOC-0003；round-trip、全截斷點、版本與原子替換已驗證 |
 | 5. Spatial 與雙向引用 | **核心完成；待 display list 視覺 smoke** | interval index、active-path DAG、原子 endpoint repair、dogfood v1.1 |
 | 6. Display list 與 C ABI | **核心邊界完成；Dart 接線中** | 6 opcodes、checked decoder、lease 雙緩衝、layout encoder、glyph outline、純 C test、p99 65.193 µs |

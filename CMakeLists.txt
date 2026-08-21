@@ -51,6 +51,9 @@ target_sources(krepis PRIVATE
     src/editing.cpp
     src/editing_session.cpp
     src/flow_layout_index.cpp
+	src/flow_editor.cpp
+	src/flow_editor_editing.cpp
+	src/flow_editor_render.cpp
     src/object_store.cpp
     src/location_index.cpp
     src/flow_sequence.cpp

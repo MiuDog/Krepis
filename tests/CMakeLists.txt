@@ -102,6 +102,13 @@ target_compile_definitions(krepis_display_list_layout_test PRIVATE
 )
 add_test(NAME krepis.display_list_layout COMMAND krepis_display_list_layout_test)
 
+krepis_add_test(krepis_flow_editor_test flow_editor_test.cpp)
+target_compile_definitions(krepis_flow_editor_test PRIVATE
+    KREPIS_TEST_EDITOR_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+    KREPIS_TEST_EDITOR_HAN_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/SourceHanSans-Regular_subset.otf"
+)
+add_test(NAME krepis.flow_editor COMMAND krepis_flow_editor_test)
+
 krepis_add_test(krepis_transaction_test transaction_test.cpp)
 add_test(NAME krepis.transaction COMMAND krepis_transaction_test)
 
