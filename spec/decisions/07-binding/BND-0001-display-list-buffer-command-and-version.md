@@ -69,8 +69,12 @@ Decoder 時間為 `O(B + C)`，`B` 是 byte size、`C` 是 command count；額�
 release 契約。代價是外殼漏 release 會造成 backpressure；配套測試比原建議更嚴格：同時持有兩幀、
 確認第三幀被拒絕、釋放後恢復，並要求 acquire count 恰等於 release count。
 
-Buffer 容量可保留並成長，縮減策略由 BND-5 benchmark 決定。外殼不能提供容量或要求核心在容量
-不足時截斷命令。
+Buffer 容量可保留並成長；當單一 slot 容量超過 8 MiB、當幀使用量不到容量 25%，且該
+slot 連續 60 次 publish 都符合低使用時，核心才在它成為未借用 back slot 時縮容。任一次
+回到高使用即將計數歸零。外殼不能提供容量或要求核心在容量不足時截斷命令。
+
+這個遲滯策略的目的是同時排除兩種靜默劣化：單次異常大頁不會永久占著高水位，而大／小頁
+面交替時也不會在每幀重複釋放與重新配置。
 
 ## D5：P1 opcode 與 payload
 
@@ -90,11 +94,10 @@ Release benchmark（WSL，2026-08-21）以 4,000 幀、每幀 200 個 20-glyph r
 
 | commands/frame | bytes/frame | 兩 slot retained | p50 | p99 | max |
 |---:|---:|---:|---:|---:|---:|
-| 203 | 104,096 | 266,624 | 22.051 µs | 44.477 µs | 193.286 µs |
+| 203 | 104,096 | 266,624 | 29.713 µs | 65.193 µs | 160.632 µs |
 
-p99 只有 3 ms gate 的 1.6%，同步通道不需重開。4,200 acquire／release 全數對帳。P1 正常 workload
-保留兩個高水位 buffer，不逐幀縮減；異常超大 frame 的縮減門檻仍需另加 spike，不能從正常 workload
-外推。
+p99 只有 3 ms gate 的 2.2%，同步通道不需重開。4,200 acquire／release 全數對帳。Peak→steady
+workload 將 9,600,104 bytes retained 降到 128 bytes，縮容花費 1,075.04 µs，仍低於 3 ms。
 
 ## D3：Command 通道同步，p99 超標即重開
 
@@ -119,6 +122,10 @@ Producer 產生版本 1.2、`byte_size=96`、兩個 command。支援 1.3 的外�
 必須回 `version_mismatch`。若第二個 command 宣告 40 bytes 但剩餘 span 只有 32 bytes，即使第一個
 command 完全合法，也不能先畫第一個再報錯，必須保留上一幀。
 
+另一例是使用者曾開啟一個形成 9.6 MB display list 的超大空間頁，之後回到只有幾個區塊的
+流式頁。核心不在第一個小 frame 立即縮容；只有當同一 slot 連續 60 次都低於 25% 使用率，
+才在它未被 lease 的時候釋放尖峰容量。
+
 ## Invariant 與拒絕行為
 
 - Publish 前必須完整 encode 與驗證，front buffer 永遠是一個完整有效 frame。
@@ -133,7 +140,3 @@ command 完全合法，也不能先畫第一個再報錯，必須保留上一幀
 - 雙緩衝使用約兩倍峰值 display-list 記憶體，避免每幀配置與讀寫競態。
 - Property test 必須覆蓋 round-trip、截斷每一 byte、錯誤 size、未知 opcode／flags、版本矩陣與
   frame-token lifetime。
-
-## 尚未決定
-
-- 異常超大 frame 後的 buffer 縮減門檻；需加入 peak→steady workload 後定案。

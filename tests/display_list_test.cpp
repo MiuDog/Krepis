@@ -175,11 +175,48 @@ void test_explicit_leases_prevent_overwrite_and_balance_release() {
 	       "配置數等於釋放數，沒有未結清 display lease");
 }
 
+void test_oversized_capacity_shrinks_only_after_steady_underuse() {
+	DisplayListPublisher publisher;
+	auto peak_builder = publisher.begin_frame();
+	expect(peak_builder.is_ok(), "peak frame 取得 back slot");
+	if (!peak_builder.is_ok()) return;
+	std::vector<Glyph> peak_glyphs(400'000, Glyph{7, 0, 64, 0, 0, 0});
+	expect(peak_builder.value()->add_glyph_run(
+		0,
+		64,
+		1024,
+		0xFF000000,
+		1,
+		GlyphDirection::ltr,
+		peak_glyphs
+	).is_ok(), "peak frame 超過縮容門檻");
+	expect(publisher.publish().is_ok(), "peak frame publish 成功");
+	const auto peak_capacity = publisher.retained_capacity();
+	expect(peak_capacity > 8 * 1024 * 1024, "peak frame 保留超過 8 MiB 容量");
+
+	for (std::size_t frame = 0; frame < 121; ++frame) {
+		auto builder = publisher.begin_frame();
+		if (!builder.is_ok()) return;
+		expect(builder.value()->add_rect(0, 0, 16, 16, 0xFFFFFFFF).is_ok(),
+		       "steady frame encode 成功");
+		expect(publisher.publish().is_ok(), "steady frame publish 成功");
+	}
+	expect(publisher.stats().compacted_slots == 0,
+	       "未達同一 slot 60 次低使用前不提早縮容");
+	auto trigger = publisher.begin_frame();
+	expect(trigger.is_ok(), "遲滯門檻後可取得原 peak slot");
+	expect(publisher.stats().compacted_slots == 1,
+	       "同一 slot 連續 60 次低使用後縮容一次");
+	expect(publisher.retained_capacity() < peak_capacity / 4,
+	       "peak→steady 後釋放大部分異常保留容量");
+}
+
 }  // namespace
 
 int main() {
 	test_round_trip_all_opcodes_and_every_truncation();
 	test_malformed_header_command_padding_and_stack_fail_closed();
 	test_explicit_leases_prevent_overwrite_and_balance_release();
+	test_oversized_capacity_shrinks_only_after_steady_underuse();
 	return krepis_test::report("krepis.display_list");
 }

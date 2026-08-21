@@ -89,5 +89,47 @@ int main() {
 	    stats.outstanding_leases != 0) {
 		return 1;
 	}
+
+	krepis::DisplayListPublisher peak_publisher;
+	std::vector<krepis::Glyph> peak_glyphs(
+		400'000,
+		krepis::Glyph{7, 0, 64, 0, 0, 0}
+	);
+	auto peak_builder = peak_publisher.begin_frame();
+	if (!peak_builder.is_ok() || !peak_builder.value()->add_glyph_run(
+		0,
+		64,
+		1024,
+		0xFF000000,
+		1,
+		krepis::GlyphDirection::ltr,
+		peak_glyphs
+	).is_ok() || !peak_publisher.publish().is_ok()) {
+		return 8;
+	}
+	const auto peak_retained = peak_publisher.retained_capacity();
+	for (std::size_t frame = 0; frame < 121; ++frame) {
+		auto steady = peak_publisher.begin_frame();
+		if (!steady.is_ok() ||
+		    !steady.value()->add_rect(0, 0, 16, 16, 0xFFFFFFFF).is_ok() ||
+		    !peak_publisher.publish().is_ok()) {
+			return 9;
+		}
+	}
+	const auto compact_started = std::chrono::steady_clock::now();
+	auto after_hysteresis = peak_publisher.begin_frame();
+	const auto compact_us = std::chrono::duration<double, std::micro>(
+		std::chrono::steady_clock::now() - compact_started
+	).count();
+	const auto steady_retained = peak_publisher.retained_capacity();
+	std::cout << "peak_to_steady peak_retained=" << peak_retained
+	          << " steady_retained=" << steady_retained
+	          << " compact_us=" << compact_us
+	          << " compacted_slots=" << peak_publisher.stats().compacted_slots
+	          << '\n';
+	if (!after_hysteresis.is_ok() || peak_publisher.stats().compacted_slots != 1 ||
+	    steady_retained >= peak_retained / 4) {
+		return 10;
+	}
 	return 0;
 }

@@ -17,6 +17,9 @@ constexpr std::size_t command_header_size = 8;
 constexpr std::size_t maximum_frame_bytes = 256 * 1024 * 1024;
 constexpr std::uint32_t maximum_commands = 10'000'000;
 constexpr std::uint32_t maximum_glyphs = 10'000'000;
+constexpr std::size_t oversized_capacity_threshold = 8 * 1024 * 1024;
+constexpr std::size_t underuse_ratio = 4;
+constexpr std::size_t underused_frames_before_compaction = 60;
 
 template <typename Integer>
 void append_little(std::vector<std::byte>& bytes, Integer value) {
@@ -236,6 +239,11 @@ void DisplayListBuilder::finalize(std::uint64_t frame_token) {
 	patch_little(bytes_, 24, frame_token);
 }
 
+void DisplayListBuilder::compact_retained_capacity() {
+	std::vector<std::byte> compact(bytes_.begin(), bytes_.end());
+	bytes_.swap(compact);
+}
+
 Result<DisplayListSummary> validate_display_list(
 	std::span<const std::byte> bytes,
 	std::uint16_t supported_major,
@@ -360,6 +368,11 @@ Result<DisplayListBuilder*> DisplayListPublisher::begin_frame() {
 		return Error{ErrorCode::invalid_state, "兩個 display slots 都仍被 lease"};
 	}
 	building_ = target;
+	if (slots_[building_].underused_frames >= underused_frames_before_compaction) {
+		slots_[building_].builder.compact_retained_capacity();
+		slots_[building_].underused_frames = 0;
+		++stats_.compacted_slots;
+	}
 	slots_[building_].builder.reset();
 	return &slots_[building_].builder;
 }
@@ -377,6 +390,12 @@ Result<std::uint64_t> DisplayListPublisher::publish() {
 	builder.finalize(token);
 	auto valid = validate_display_list(builder.bytes_);
 	if (!valid.is_ok()) return valid.error();
+	if (builder.retained_capacity() > oversized_capacity_threshold &&
+	    builder.bytes_.size() <= builder.retained_capacity() / underuse_ratio) {
+		++slots_[building_].underused_frames;
+	} else {
+		slots_[building_].underused_frames = 0;
+	}
 	slots_[building_].frame_token = token;
 	front_ = building_;
 	building_ = no_slot;

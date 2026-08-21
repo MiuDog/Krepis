@@ -66,6 +66,7 @@ private:
 		std::size_t payload_size
 	);
 	void finalize(std::uint64_t frame_token);
+	void compact_retained_capacity();
 
 	std::vector<std::byte> bytes_;
 	std::uint32_t command_count_ = 0;
@@ -89,6 +90,7 @@ struct DisplayListPublisherStats {
 	std::uint64_t acquired_leases = 0;
 	std::uint64_t released_leases = 0;
 	std::size_t outstanding_leases = 0;
+	std::uint64_t compacted_slots = 0;
 };
 
 class DisplayListPublisher {
@@ -109,6 +111,7 @@ private:
 		DisplayListBuilder builder;
 		std::uint64_t frame_token = 0;
 		std::size_t lease_count = 0;
+		std::size_t underused_frames = 0;
 	};
 
 	static constexpr std::size_t no_slot = static_cast<std::size_t>(-1);

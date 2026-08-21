@@ -40,5 +40,7 @@ Flutter 持有 token 71（slot A），核心可在 slot B 產出 token 72。若 
   command count 與兩種 stack 不平衡均有測試。
 - 純 C 測試建立 shared-library handle、encode/publish/acquire/validate/release/destroy，並驗證未釋放時
   destroy 拒絕。
-- Release BND-5：203 commands/frame、104,096 bytes/frame、p99 44.477 µs、max 193.286 µs；
+- Release BND-5：203 commands/frame、104,096 bytes/frame、p99 65.193 µs、max 160.632 µs；
   acquire=release=4,200。
+- Peak→steady：9,600,104 bytes 降至 128 bytes，縮容 1,075.04 µs；8 MiB／25%／每 slot 60 幀
+  遲滯門檻正式定案。
