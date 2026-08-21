@@ -2,8 +2,9 @@
 
 ## 狀態
 
-**已由 P1 主計畫與 DOC-0001／EDT-0001／TXT-0001 核准，進行中（2026-08-21）。**
-本計畫不新增人工決策；一般文字 merge 時間窗由 benchmark 定案。
+**核心階段完成（2026-08-21）；Flutter／Notist 接線併入 P1 display list 與 C ABI 階段。**
+本計畫不新增人工決策；一般文字 merge 時間窗暫定 `1000 ms`，待 Notist 真實輸入 trace
+校正，但不改變 typed merge 契約。
 
 ## 資料流
 
@@ -53,6 +54,21 @@ Y 前。若 B 把 `BCD` 換成 `Y`，位於原 range 內的 composition anchor �
 3. 全域 `UndoManager`，composition commit 永不 merge；一般連續 typing 依 typed merge metadata。
 4. benchmark 一般 typing pause 分布並定案 EDT-5 merge window。
 5. 接 Notist 的 Flow caret、IME 與 undo intent；Flutter 不保存第二份文字 authority。
+
+## 已完成證據
+
+- `TextAnchor`、兩種 `Selection`、grapheme range transaction 與 D14／D15 transformation 已實作。
+- `EditingSession` 支援 raw／converted／target-converted／input-error segments；overlay 不修改
+  `DocumentRevision`，成功 commit 才清除，stale commit 保留，Block delete 取消。
+- `UndoManager` 是整份文件的單一序列；command 透過 `TextEditMergePolicy` 宣告 merge 能力，stack
+  不猜語意。一般輸入只有在同 Block、同非零 merge group、相鄰純插入且間隔不超過 `1000 ms`
+  時合併；IME 確定採 `never`。
+- WSL Debug 全套 `22/22` 通過；聚焦測試包含 combining sequence、選取取代 round-trip、redo
+  分支清除、失敗 undo 不移動 history，以及 composition 後相鄰 typing 不合併。
+
+具體例子：使用者在同一段依序輸入 `B`、`C`，時間為 `100 ms`、`400 ms` 且 merge group 都是
+`7`，一次 undo 同時移除 `BC`。若第二次輸入發生在 `1101 ms`，或游標移動使 merge group 改變，
+兩次輸入便是兩個 entry。注音確定 `知` 即使發生在 `200 ms` 且位置相鄰，也固定是獨立 entry。
 
 ## 驗收
 

@@ -98,6 +98,12 @@ content revision 從 41 直接變 42，不是 43，undo 也只有一項。
 - Typed command 增加每種操作的明確實作，但把 merge 與反向規則集中在唯一位置。
 - 測試必須涵蓋全部成功、任一失敗無部分結果、stale base、舊 snapshot 不變與一次 revision 增量。
 
-## 尚未決定
+## EDT-5：一般輸入 merge 時間窗
 
-- 一般文字輸入 merge 的 EDT-5 時間窗；初始約一秒，但必須以真實 workload 量測。
+P1 初始值採 `1000 ms`。時間窗只是 typed command 已判定「可合併」後的第二層限制；它不得讓
+不同 Block、不同 merge group、非相鄰插入或 IME commit 合併。Notist 接線後收集真實輸入 pause
+trace 再校正數值；校正只能修改門檻與邊界測試，不得把語意判斷移入 undo stack。
+
+這是暫定建議值而非人體輸入量測結論，因此測試特別鎖住 `1000 ms` 可合併、`1001 ms` 必須分開，
+並把 selection 改變映射成不同非零 merge group。這項待校正事項不阻擋核心資料結構，但會在
+Notist P1 驗收前以實際 trace 重審。
