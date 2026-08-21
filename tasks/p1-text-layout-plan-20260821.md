@@ -109,6 +109,22 @@ ParagraphLayout {
   feature set；值只含純資料。
 - cache 容量、淘汰門檻與同步 shaping 佔比由 TXT-5 benchmark 定案。
 
+line layout 採兩階段，不直接依 byte offset 切割 2B 已產生的 glyph runs：
+
+```mermaid
+flowchart LR
+  analyze2c["Paragraph analysis"] --> provisional["Provisional shaping for advances"]
+  provisional --> choose["Greedy choice among policy-approved breaks"]
+  choose --> perline["Per-line bidi reorder plus reshaping"]
+  perline --> fragments["Line fragments, glyph runs, caret stops"]
+  fragments --> lru["Dependency-keyed LRU"]
+```
+
+原因：若把整段 Arabic 的 glyph run 在選定 byte offset 後直接切成兩半，行尾／行首字母的 joining
+form 仍會保留「原本相鄰」的形狀；若沿用整段的 bidi 視覺順序，UAX #9 的 line-level 重排也可能錯。
+因此第一次 shaping 只供寬度估算，確定每行 byte range 後必須逐行重排與重塑。超長且無候選斷點的
+URL 仍形成單一 overflow line，不退化成任意 grapheme 切割。
+
 ## 實作順序與驗收
 
 ### 1. 依賴與 canonical UTF-8
