@@ -9,6 +9,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -25,7 +26,11 @@ struct FlowSequenceConfig {
     std::size_t leaf_capacity = 64;
     std::size_t internal_fanout = 32;
     std::size_t merge_low_water = 24;
+    // D22：2026-08-21 benchmark 定案；見 tasks/lay-0002-leaf-key-relabel-report.md。
+    std::size_t initial_relabel_window = 64;
 };
+
+class FlowSequenceInsertResult;
 
 // B+ tree 節點基底。發布後不可變（D8）。
 //
@@ -89,7 +94,7 @@ private:
 // FlowContainer 的權威 child sequence handle。
 //
 // 責任：提供 rank-based 的 COW 結構操作，回傳新的不可變 FlowSequence。
-// 不負責：LeafKey 管理（由 authority 外部維護）、layout extent。
+// 不負責：發布 LocationIndex（由 DocumentRevision 依 typed edit result 原子處理）、layout extent。
 // 維持的不變條件：root 為 null 表示空序列；非 null 時 root 的 block_count 即為總數。
 // 擁有哪些資源：透過 IntrusivePtr 共享 B+ tree 子樹。
 // 生命週期：值型別語意（可複製、可搬移）；copy 共享子樹。
@@ -112,8 +117,20 @@ public:
     // 找不到回傳 block_count()（等同 past-the-end）。
     [[nodiscard]] std::size_t find_by_key(const LeafKey& key) const;
 
+	// 依 LocationIndex 的 LeafKey 在單一 leaf 內尋找 Block，成功回傳全域 rank。
+	// 成本為 O(tree height + leaf capacity)，不掃描整份文件。
+	[[nodiscard]] std::optional<std::size_t> find_block_in_leaf(
+		const LeafKey& key,
+		BlockId block
+	) const;
+
     // 前置條件：position <= block_count()。回傳包含插入結果的新 FlowSequence。
     [[nodiscard]] FlowSequence insert(std::size_t position, BlockId block_id) const;
+
+    // D22：回傳新 sequence、來源 root、所有 locator 更新與可觀察 relabel 診斷。
+    // DocumentRevision 必須核對 source_root 後才可原子發布。
+    [[nodiscard]] FlowSequenceInsertResult insert_with_updates(
+        std::size_t position, BlockId block_id) const;
 
     // 前置條件：position < block_count()。回傳移除後的新 FlowSequence。
     [[nodiscard]] FlowSequence remove(std::size_t position) const;
@@ -127,6 +144,41 @@ private:
 
     FlowSequenceConfig config_;
     IntrusivePtr<const FlowSequenceNode> root_;
+};
+
+struct FlowLocatorUpdate {
+    BlockId block;
+    LeafKey leaf_key;
+};
+
+struct FlowSequenceEditDiagnostics {
+    std::size_t relabeled_leaf_count = 0;
+    std::size_t relabel_window = 0;
+    bool global_rebuild = false;
+};
+
+// D22：一次 Flow 插入的完整結果。sequence 與 locator_updates 必須一起發布。
+class FlowSequenceInsertResult {
+public:
+    [[nodiscard]] const IntrusivePtr<const FlowSequenceNode>& source_root() const noexcept;
+    [[nodiscard]] const FlowSequence& sequence() const noexcept;
+    [[nodiscard]] FlowSequence take_sequence() && noexcept;
+    [[nodiscard]] std::span<const FlowLocatorUpdate> locator_updates() const noexcept;
+    [[nodiscard]] const FlowSequenceEditDiagnostics& diagnostics() const noexcept;
+
+private:
+    friend class FlowSequence;
+
+    FlowSequenceInsertResult(
+        IntrusivePtr<const FlowSequenceNode> source_root,
+        FlowSequence sequence,
+        std::vector<FlowLocatorUpdate> locator_updates,
+        FlowSequenceEditDiagnostics diagnostics) noexcept;
+
+    IntrusivePtr<const FlowSequenceNode> source_root_;
+    FlowSequence sequence_;
+    std::vector<FlowLocatorUpdate> locator_updates_;
+    FlowSequenceEditDiagnostics diagnostics_;
 };
 
 // 依 LAY-0002 D15：snapshot-bound 的跨 leaf 走訪 cursor。

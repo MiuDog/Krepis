@@ -15,15 +15,12 @@ FFI 邊界、client 契約、平台外殼介面。
   `O(可見元素數)` 次跨語言資料封送，不可行。
 - **client 在結構上無法成為權威**；client 不得是任何規則的唯一實作。
 
-## 待決問題
-
-- **display list 的傳遞機制**：連續緩衝區 ＋ 外殼零複製讀取。所有權與生命週期歸誰？
-  雙緩衝還是每幀重配置？
-- **command 通道**：外殼送入的鍵盤／IME／指標事件如何編碼？同步或非同步？
-- **響應性怎麼取得**：`FND-0001` 第 6 條排除了「外殼快取規則做樂觀更新」的常見做法。
-  那麼輸入到畫面的路徑必須夠短——**這是對版面增量性的直接要求**，不是外殼可以自己解的問題。
-- **錯誤與版本不符**：核心與外殼可能不同步升級，display list 版本不合時的行為必須 fail closed。
-
 ## 決策
 
-（尚無）
+- [`BND-0001`](BND-0001-display-list-buffer-command-and-version.md)：固定 binary header、TLV command、
+  核心雙緩衝、同步 command、版本與錯誤 fail-closed。
+
+## 尚待量測／定義
+
+- 最終 opcode 與 payload schema。
+- BND-5 封送成本、buffer 容量保留及縮減門檻。

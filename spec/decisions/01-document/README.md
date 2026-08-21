@@ -14,9 +14,9 @@ node tree 的形狀、stable ID、schema 與其版本遷移、序列化 codec。
   即時引用與 composing region 的模型位置（**Accepted**）。
 - [`DOC-0002`](DOC-0002-object-id-representation-and-generation.md)：ObjectId 的位元表示、
   強型別包裝、生成與正規編碼（**Accepted**）。補上 DOC-0001 留給後續的四項，使 ObjectId 可實作。
+- [`DOC-0003`](DOC-0003-disposable-dogfood-file.md)：Q1=A 的可丟棄本機檔案、重建邊界與原子替換
+  （**Accepted**；P4 必須丟棄）。
 
 ## 待決問題
 
-- **schema 版本策略**：第一版即需決定「舊檔怎麼讀」，否則 P1.5 開始 dogfood 後的資料無法演進。
-- **第一版 codec 是刻意可丟棄的**：P1.5 只需要能存檔以支撐 dogfood，正式格式待 `ATH-*`。
-  這一點必須在決策裡寫明，否則會被誤當成正式格式沿用。
+- 正式 schema 與 migration 策略仍待 `ATH-*`；DOC-0003 明確不建立 migration chain。

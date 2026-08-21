@@ -3,10 +3,19 @@ cmake_minimum_required(VERSION 3.24)
 project(krepis
     VERSION 0.0.1
     DESCRIPTION "結構化筆記基座：權威狀態、文件模型、版面、選取、undo 與 ink 資料模型"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 find_package(Threads REQUIRED)
+include(cmake/KrepisTextDependencies.cmake)
+
+# Krepis 的 C ABI 以 shared library 交付；靜態文字依賴會被連入其中，必須具備 PIC。
+set_target_properties(
+    harfbuzz
+    krepis_text_unibreak
+    krepis_text_sheenbidi
+    PROPERTIES POSITION_INDEPENDENT_CODE ON
+)
 
 # 本專案為基座庫，可被其他專案 add_subdirectory 引入；只有作為頂層專案時才建置測試。
 if(PROJECT_IS_TOP_LEVEL)
@@ -30,19 +39,42 @@ endif()
 
 add_library(krepis)
 add_library(krepis::krepis ALIAS krepis)
+set_target_properties(krepis PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_sources(krepis PRIVATE
     src/arena.cpp
     src/document_revision.cpp
+    src/display_list.cpp
+	src/display_list_layout.cpp
+    src/dogfood_file.cpp
+    src/embed_record.cpp
+    src/editing.cpp
+    src/editing_session.cpp
     src/flow_layout_index.cpp
+	src/flow_editor.cpp
+	src/flow_editor_editing.cpp
+	src/flow_editor_render.cpp
     src/object_store.cpp
     src/location_index.cpp
     src/flow_sequence.cpp
+	src/font_registry.cpp
+	src/glyph_outline.cpp
     src/id_generator.cpp
     src/ink_types.cpp
     src/leaf_key.cpp
+    src/layout_invalidation.cpp
     src/object_id.cpp
+    src/paragraph_record.cpp
     src/reclamation.cpp
+    src/reference_resolver.cpp
+    src/reference_index.cpp
+    src/spatial_container.cpp
+    src/transaction.cpp
+    src/undo.cpp
+    src/text_analysis.cpp
+    src/text_layout.cpp
+    src/text_shaper.cpp
+    src/utf8.cpp
     src/version.cpp
 )
 
@@ -52,7 +84,23 @@ target_include_directories(krepis PUBLIC
 )
 
 target_compile_features(krepis PUBLIC cxx_std_20)
-target_link_libraries(krepis PUBLIC Threads::Threads)
+target_link_libraries(krepis
+    PUBLIC Threads::Threads
+    PRIVATE harfbuzz krepis_text_unibreak krepis_text_sheenbidi
+)
+
+add_library(krepis_c SHARED src/krepis_c.cpp)
+target_link_libraries(krepis_c PRIVATE krepis::krepis)
+target_include_directories(krepis_c PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_compile_definitions(krepis_c PRIVATE KREPIS_BUILD_DLL)
+if(MSVC)
+    target_compile_options(krepis_c PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(krepis_c PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 
 if(MSVC)
     # /W4 為警告基線；/permissive- 關閉 MSVC 的寬鬆一致性模式，避免寫出不可攜的程式碼。

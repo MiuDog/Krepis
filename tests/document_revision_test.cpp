@@ -8,6 +8,7 @@
 using krepis::BlockId;
 using krepis::ContainerId;
 using krepis::DocumentRevision;
+using krepis::ErrorCode;
 using krepis::FlowSequence;
 using krepis::FlowSequenceConfig;
 using krepis::IdDirectory;
@@ -17,7 +18,10 @@ using krepis::ObjectRecord;
 using krepis::ObjectSlot;
 using krepis::ObjectStoreSnapshot;
 using krepis::RevisionValidation;
+using krepis::RectD;
 using krepis::SnapshotId;
+using krepis::SpatialContainer;
+using krepis::SpatialPlacement;
 using krepis::make_intrusive;
 using krepis::shutdown_default_reclamation_queue;
 using krepis_test::expect;
@@ -378,6 +382,144 @@ void test_revision_bundles_content_and_order_atomically() {
     expect(rev2.validate().ok(), "新 revision 仍然一致");
 }
 
+void test_flow_insert_publishes_relabel_and_locations_atomically() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+    config.merge_low_water = 1;
+    config.initial_relabel_window = 8;
+
+    auto seq = FlowSequence::empty(config);
+    const auto container = make_container(77);
+    bool exercised_relabel = false;
+
+    for (std::size_t i = 0; i < 1000; ++i) {
+        auto edit = seq.insert_with_updates(seq.block_count(), make_block(i + 1));
+        if (edit.diagnostics().relabeled_leaf_count == 0) {
+            seq = std::move(edit).take_sequence();
+            continue;
+        }
+
+        exercised_relabel = true;
+        auto base = DocumentRevision::initial().with_flow_root(container, seq);
+        const auto base_id = base.snapshot_id();
+        const auto base_count = base.flow_root(container)->block_count();
+
+        auto applied = base.with_flow_insert(container, edit);
+        expect(applied.is_ok(), "來源 root 相符時接受 typed Flow insert");
+        if (!applied.is_ok()) {
+            break;
+        }
+        auto next = std::move(applied).take();
+
+        expect(next.validate().ok(), "sequence 與所有局部 locator 在同一 revision 發布");
+        expect(next.flow_root(container)->block_count() == base_count + 1,
+               "typed Flow insert 只加入一個 Block");
+        expect(next.snapshot_id().content_revision == base_id.content_revision + 1,
+               "局部 relabel 隨插入只前進一次 content revision");
+        expect(next.snapshot_id().storage_generation == base_id.storage_generation,
+               "bounded relabel 不誤標為全域 storage rebuild");
+        expect(base.validate().ok() && base.flow_root(container)->block_count() == base_count,
+               "舊 revision 的 sequence 與 locator 保持不變");
+
+        auto stale = next.with_flow_insert(container, edit);
+        expect(!stale.is_ok(), "同一 typed edit 不得套到較新的 root");
+        if (!stale.is_ok()) {
+            expect(stale.error().code() == ErrorCode::revision_conflict,
+                   "stale Flow edit 回傳 revision_conflict");
+        }
+        break;
+    }
+
+    expect(exercised_relabel, "測試必須實際跨過 LeafKey 間距耗盡");
+}
+
+void test_first_flow_insert_creates_container_atomically() {
+    const auto container = make_container(66);
+    auto base = DocumentRevision::initial();
+    auto edit = FlowSequence::empty().insert_with_updates(0, make_block(1));
+
+    auto applied = base.with_flow_insert(container, edit);
+    expect(applied.is_ok(), "空 revision 接受來源 root 為 null 的第一次 Flow insert");
+    if (!applied.is_ok()) {
+        return;
+    }
+
+    const auto next = std::move(applied).take();
+    expect(next.container_count() == 1, "第一次 typed insert 同時建立 Container root");
+    expect(next.flow_root(container)->at(0) == make_block(1), "第一次 typed insert 保存 Block");
+    expect(next.validate().ok(), "第一次 typed insert 同時建立正確 locator");
+    expect(base.container_count() == 0, "第一次 typed insert 不改寫舊 revision");
+}
+
+void test_global_relabel_advances_storage_generation() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+    config.merge_low_water = 1;
+    config.initial_relabel_window = 10000;
+
+    auto seq = FlowSequence::empty(config);
+    const auto container = make_container(88);
+    bool exercised_global = false;
+
+    for (std::size_t i = 0; i < 1000; ++i) {
+        auto edit = seq.insert_with_updates(seq.block_count(), make_block(10000 + i));
+        if (!edit.diagnostics().global_rebuild) {
+            seq = std::move(edit).take_sequence();
+            continue;
+        }
+
+        exercised_global = true;
+        auto base = DocumentRevision::initial().with_flow_root(container, seq);
+        auto applied = base.with_flow_insert(container, edit);
+        expect(applied.is_ok(), "全域 relabel 可與內容插入原子發布");
+        if (applied.is_ok()) {
+            const auto next = std::move(applied).take();
+            expect(next.snapshot_id().content_revision ==
+                       base.snapshot_id().content_revision + 1,
+                   "全域 relabel 同時前進 content revision");
+            expect(next.snapshot_id().storage_generation ==
+                       base.snapshot_id().storage_generation + 1,
+                   "全域 relabel 前進 storage generation");
+            expect(next.validate().ok(), "全域 relabel 後 sequence 與 locator 一致");
+        }
+        break;
+    }
+
+    expect(exercised_global, "大型 window 必須實際走到 global relabel 分支");
+}
+
+void test_replacing_roots_clears_removed_locations() {
+	const auto flow_container = make_container(701);
+	auto flow = FlowSequence::empty().insert(0, make_block(1)).insert(1, make_block(2));
+	auto revision = DocumentRevision::initial().with_flow_root(flow_container, std::move(flow));
+	revision = revision.with_flow_root(
+		flow_container,
+		FlowSequence::empty().insert(0, make_block(2))
+	);
+	expect(revision.locations().lookup(revision.resolve(make_block(1))).is_empty(),
+	       "替換 Flow root 會清除被移除 Block 的舊 locator");
+	expect(revision.validate().ok(), "替換 Flow root 後 revision 仍一致");
+
+	const auto spatial_container = make_container(702);
+	auto spatial = SpatialContainer::create({
+		SpatialPlacement{1, make_block(3), RectD{0, 0, 10, 10}, 10, 10, 0},
+		SpatialPlacement{2, make_block(4), RectD{20, 0, 10, 10}, 10, 10, 0},
+	});
+	expect(spatial.is_ok(), "Spatial root fixture 建立成功");
+	if (!spatial.is_ok()) return;
+	revision = revision.with_spatial_root(spatial_container, std::move(spatial).take());
+	auto replacement = SpatialContainer::create({
+		SpatialPlacement{2, make_block(4), RectD{20, 0, 10, 10}, 10, 10, 0},
+	});
+	if (!replacement.is_ok()) return;
+	revision = revision.with_spatial_root(spatial_container, std::move(replacement).take());
+	expect(revision.locations().lookup(revision.resolve(make_block(3))).is_empty(),
+	       "替換 Spatial root 會清除被移除 Block 的舊 locator");
+	expect(revision.validate().ok(), "替換 Spatial root 後 revision 仍一致");
+}
+
 }  // namespace
 
 int main() {
@@ -403,6 +545,10 @@ int main() {
     test_validate_rejects_block_in_two_containers();
     test_validate_rejects_missing_location_entry();
     test_revision_bundles_content_and_order_atomically();
+    test_flow_insert_publishes_relabel_and_locations_atomically();
+    test_first_flow_insert_creates_container_atomically();
+    test_global_relabel_advances_storage_generation();
+	test_replacing_roots_clears_removed_locations();
 
     shutdown_default_reclamation_queue();
     return krepis_test::report("krepis.document_revision");

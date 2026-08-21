@@ -92,8 +92,13 @@ VS Code 使用者也可以執行 `Tasks: Run Task` → `Verify`，一次完成�
 
 `0.0.1` —— 骨架階段。公開介面尚未穩定。
 
-進入實作前必須完成的 spike：
+進入實作前的 spike 已完成並保留報告：
 
-1. **C++ 文字處理依賴選型**（text shaping、雙向文字、grapheme 邊界；候選 HarfBuzz／ICU）
-2. **FFI 邊界延遲實測**（C++ 版面引擎 ↔ Flutter 每次按鍵往返）。**此項不通過則整個架構不成立。**
-3. **in-process／out-of-process 提交點**：一次編輯何時從 in-process 狀態提交為 authority transaction。
+1. **C++ 文字處理依賴選型**：HarfBuzz ＋ libunibreak ＋ SheenBidi；Windows DirectWrite spike 亦已完成。
+2. **FFI 邊界延遲實測**：display list／FFI 形狀可行；正式格式定案後仍須重測端到端成本。
+3. **in-process／out-of-process 提交點**：P1 採 in-process，同步命令與背景 immutable snapshot 工作分離。
+
+目前正在 P1：ownership、ObjectStore、FlowSequence、前綴高度索引、D17 七道閘門，以及
+`ParagraphRecord → 原子 Transaction → 局部 layout invalidation` 第一條核心路徑已完成。下一個
+里程碑是接上 shaping、composition、display list 與 Flutter。Ink 資料模型已部分提早完成，但 Ink
+功能整合不列入 P1 驗收。

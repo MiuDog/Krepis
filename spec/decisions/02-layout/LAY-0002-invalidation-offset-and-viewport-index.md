@@ -2,7 +2,7 @@
 
 ## 狀態
 
-**Proposed**（D1–D20 已接受；完整失效規則待決）
+**Accepted**
 
 > **D17 的七道強制閘門已全部關閉（2026-08-18）。** 閘門 7（人工審查）12/12 接受、
 > 簽核者 Chiayu；閘門 5（ASan／TSan）於 WSL ＋ GCC 13.3 執行，兩種 sanitizer 各 11/11 零診斷。
@@ -14,14 +14,18 @@
 - D1–D11 接受：2026-08-16
 - D12–D19 接受：2026-08-17
 - D20（分塊參數，由 benchmark 定案）接受：2026-08-17
+- D21（失效階段、停止條件與 reference cache key）接受：2026-08-21
+- D22（LeafKey 局部 relabel 與原子 locator 更新）接受：2026-08-21
+- D22 relabel 初始 window（benchmark 定案為 64）：2026-08-21
 
 ## 背景
 
 P0 已證明若每次編輯都重寫全部後續 Block 的絕對 `y`，工作量會隨文件長度成長。P1 必須以
 累積高度索引從 viewport 找出可見 Block，並讓單一 Block 高度改變只更新聚合路徑。
 
-本檔已選定 Chunked B+ tree／Block rope 作為正式方向；分塊參數、延遲物化與完整失效規則
-尚未裁決，因此整份 `LAY-0002` 尚未完成。
+本檔已選定 Chunked B+ tree／Block rope 作為正式方向；D20 固定已量測的分塊參數，D21 固定完整
+失效方向、巢狀停止條件與 reference cache key，D22 固定 LeafKey 間距耗盡時的局部修復與發布
+契約。仍需量測的估計高度、overscan 與 relabel window 是可替換參數，不再阻擋本決策成立。
 
 ## D1：高度是 layout cache，不是 Block 內容
 
@@ -612,6 +616,7 @@ D17–D18 的生命週期與 revision 流程見
 leaf_capacity   = 64
 internal_fanout = 32
 merge_low_water = 24
+relabel_window  = 64  // D22 於 2026-08-21 補測定案
 ```
 
 量測的**主要產出不是這三個數字，而是「這三個數字不是瓶頸」**：全部候選設定都通過
@@ -632,14 +637,168 @@ Vector＋Fenwick 的核心主張，現由實測支持而非僅靠設計論證。
 未涵蓋：ARM（iPad）平台、長期編輯後的樹稀疏化、併發讀寫。`internal_fanout`
 在 8–32 之間依原則而非量測決定（長文件的深度優勢在 10,000 blocks 時看不出來）。
 
+## D21：失效只記最早階段，沿單向 dependency graph 傳播
+
+### 決策與適用邊界
+
+每個 layout cache entry 只記錄**最早失效階段**，其所有下游階段隱含失效：
+
+```text
+shaping -> line_break -> extent -> paint -> hit_test
+```
+
+- `shaping`：glyph、advance、cluster mapping 或 fallback font 已過期。
+- `line_break`：glyph 可沿用，但可用寬度或斷行政策使 line fragments 過期。
+- `extent`：line fragments 可沿用，但 Block／子容器總尺寸聚合過期。
+- `paint`：幾何仍有效，只有顏色、selection、caret 或非幾何裝飾過期。
+- `hit_test`：畫面可沿用，但互動命中索引過期。若 paint 與 hit-test 同時變更，記較早的 `paint`。
+
+失效資料是衍生工作提示，不進 ObjectStore、不持久化，也不由 client 提交。Transaction 依 command
+型別產生 `LayoutInvalidation {BlockId, source_content_revision, earliest_stage}`；layout coordinator
+核對 revision 與 Block 位置後才套用。
+
+資料流與具體 50,000 Block 範例見
+[`docs/architecture/edit-transaction-and-layout-invalidation.md`](../../../docs/architecture/edit-transaction-and-layout-invalidation.md)。
+
+### 變更到失效階段的映射
+
+| 變更 | 最早失效階段 | 理由 |
+|---|---|---|
+| Paragraph 文字、composition 文字、script／language feature | shaping | glyph 與 cluster 都可能改變 |
+| Font-set revision、字型大小、字型 feature | shaping | fallback、metrics 或 glyph substitution 改變 |
+| Flow 可用寬度、禁斷政策、固定頁 margin | line_break | 相同 glyph 重新分行；字級變更仍屬 shaping |
+| 子 FlowContainer 回報新總高度、圖片 intrinsic size | extent | 只需更新父 entry 與 prefix aggregate |
+| 顏色、selection、caret、composition underline | paint | 不改文字幾何 |
+| Pointer policy 或可互動區域但不改畫面 | hit_test | 只重建命中資料 |
+
+同一批 transaction 對同一 Block 有多個原因時取 dependency graph 中最早者，不能讓較晚階段覆蓋
+較早階段。例如同時改文字與顏色，結果仍是 `shaping`。
+
+### 演算法流程
+
+1. Transaction 成功後輸出 stable BlockId 與最早階段；失敗 transaction 不輸出失效。
+2. Coordinator 以 `LocationIndex` 取得 owner 與 LeafKey，再由 FlowSequence 找 leaf 起點並在固定
+   `leaf_capacity=64` 內定位 Block。
+3. 核對 FlowLayoutIndex 同 position 的 BlockId；不同即拒絕該 cache，改由 FlowSequence 重建。
+4. Paragraph 從 shaping 失效時保留舊 measured height 作 estimate，entry 改標 `estimated`，使
+   viewport 在背景重測前仍可定位。
+5. Layout worker 優先重測 viewport／overscan 內 dirty entry；完成後更新實際高度與聚合短路徑。
+6. 若 Block 總 extent 改變，父 FlowContainer 中代表該子容器的單一 entry 從 `extent` 失效；若總
+   extent 相同，傳播在子容器邊界停止。
+
+### Reference view cache key
+
+`FlowRangeEmbed` 與 Spatial viewport reference 的 cache key 至少包含：
+
+```text
+{
+    source_container_id,
+    source_snapshot_id,
+    reference_start_anchor,
+    reference_end_anchor,
+    source_layout_context_key,
+    reference_viewport_key
+}
+```
+
+`source_layout_context_key` 包含來源一般模式寬度、style revision、font-set revision 與 scale；
+`reference_viewport_key` 只含裁切範圍與垂直 scroll offset，不讓 Spatial frame 寬度觸發另一套斷行。
+P1 對 `source_snapshot_id` 採 exact match；未來若要部分沿用，必須另立 ADR 定義 dependency revision，
+不能只比較 BlockId。
+
+### 複雜度
+
+令 `H` 為 Flow tree 高度、`C` 為固定 leaf capacity、`A` 為受影響祖先容器數：
+
+- 定位與失效單一 Block：`O(H + C)`。
+- 更新 extent aggregate：`O(H)`。
+- 巢狀傳播：`O(A × H)`，且每層只處理代表子容器的一個 entry；不掃描後續兄弟或全文。
+- Reference key 查找依 cache 容器實作，key 本身為 `O(1)` 固定欄位；cache 容量仍由量測決定。
+
+### 具體例子
+
+FlowContainer X 有 50,000 個 Paragraph。位置 37,421 的文字由一行變兩行：Transaction 只輸出該
+Block 的 shaping invalidation；coordinator 在對應 leaf 內找到它，保留舊高度 28 作 estimate。Worker
+量得 44 後只複製該 extent leaf 到 root 的短路徑，後方 Block 的絕對 `y` 在查詢 prefix 時自然增加
+16，不逐筆改寫。若 X 是父 FlowContainer Y 的一個 child，Y 只更新代表 X 的那一項高度。
+
+反例：LocationIndex 指向位置 37,421，但 LayoutIndex 該位置是另一個 BlockId。核心不得把 44 套到
+錯誤 Block；它拒絕 cache 並依 FlowSequence 重建。這是可見成本，優於無聲座標錯置。
+
+### Invariant 與拒絕行為
+
+- 失效方向只准往下游，較晚階段不能覆蓋較早階段。
+- Layout cache 的 `source SnapshotId`、BlockId 或 layout context 不符時 fail closed。
+- Client 不得提交 cache key、estimated height 或「已重算」旗標。
+- Reference 不得因自己的 frame width 建立不同來源斷行結果；違反時拒絕 cache reuse。
+
+### 後果與驗證
+
+- 保留舊高度可避免首次背景重測前把後方內容全部放在 `y=0`，代價是 scrollbar 暫時近似。
+- Exact SnapshotId 可能丟掉仍可用的背景結果，但規則可直接驗證；效能不足時另立 dependency-key ADR。
+- 測試必須涵蓋階段合併、BlockId mismatch、舊 index 不變、重測轉回 measured、父層停止條件與
+  reference key 每個欄位的失效效果。
+
+## D22：LeafKey relabel 由 bounded edit result 原子發布
+
+2026-08-21 已以預設參數重現：連續尾插 5,000 個 Block 會耗盡最後一個 leaf 到
+`leaf_key_max` 的中點，舊實作把新 leaf 設成右邊界，下一次 split 便以相同 key 觸發 assertion。
+修正不能只增加 key 寬度或調小測試，必須實作 D13 已定義的局部 relabel。
+
+插入先以 rank 找到目標 leaf；若目標 key 與右側邊界沒有中點，選取鄰近 leaf window，在 window
+外側兩個不變 key 之間重新均勻分配。空間不足時 window 依幾何級數擴張。每個被改 key 的 leaf
+只複製 root 到該 leaf 的 COW 路徑，不把整份 sequence 攤平成陣列。
+
+```mermaid
+flowchart TD
+  insert["Insert at rank"] --> target["Find target leaf and right bound"]
+  target --> gap{"Midpoint exists?"}
+  gap -->|yes| split["Split target leaf"]
+  gap -->|no| window["Collect bounded neighbor window"]
+  window --> space{"Outside interval has enough space?"}
+  space -->|no| expand["Grow window geometrically"]
+  expand --> space
+  space -->|yes| relabel["COW replace changed leaf keys"]
+  relabel --> split
+  split --> edit["Return sequence plus locator updates"]
+  edit --> publish["Publish FlowSequence and LocationIndex together"]
+```
+
+插入 API 的 typed edit result 必須包含：
+
+```text
+FlowSequenceInsertResult {
+    source_root
+    sequence
+    locator_updates[] { block_id, new_leaf_key }
+    diagnostics { relabeled_leaf_count, relabel_window, global_rebuild }
+}
+```
+
+- `source_root` 防止把由舊 sequence 算出的更新套到新 revision。`DocumentRevision` 發現 root 不匹配時
+  回傳 `revision_conflict`，不得套用部分 locator。
+- `locator_updates` 包含 split 後移到新 leaf 的 Block、插入 Block，以及 relabel window 內所有 key
+  改變的 Block；其他 LocationIndex page 不複製。
+- sequence root 與 LocationIndex page root 必須在同一個 `DocumentRevision` 建構完成後才發布。
+- 舊 snapshot 仍持有舊 root 與舊 locator，不得被 relabel 原地改寫。
+- 若 window 擴張到整棵 sequence，診斷標記 `global_rebuild`；與內容插入同時發生時 content revision
+  必須前進，storage generation 也前進，使舊內部 handle 明確失效。
+- 初始 window 已由 [`tasks/lay-0002-leaf-key-relabel-report.md`](../../../tasks/lay-0002-leaf-key-relabel-report.md)
+  定案為 **64 leaves**。在 50,000 次頭／尾／中間插入的混合 workload 中，它同時得到最低中位總
+  時間與最少 locator updates，且沒有擴張 window 或 global rebuild。
+- `leaf_key_distribute` 必須讓相鄰輸出與首尾邊界之間至少保留一個可用整數；只做到 key 相異仍會
+  讓最後一個 leaf 緊貼邊界，下一次 split 立即再次失敗。
+- 診斷數據必須可被測試與 benchmark 讀取，不能把重新編號隱藏成無法觀察的偶發延遲。
+
+具體例子：keys 為 `1000, 1001, 1002, 1003`，而目標 leaf 與右側 key 已相鄰時，可在外側不變
+邊界之間把這個 window 改成 `1000, 2000, 3000, 4000`。只有這四個 leaves 中的 Block locator
+跟著更新；stable BlockId、內容與邏輯順序都不變。
+
 ## 尚未決定
 
-- LeafKey 的 relabel window 初始大小與目標間距。
 - ObjectStore 的 Record page 容量、page-table fanout 與 compact 門檻。
 - 未量測 Block 的估計高度與第一次開啟超長文件的物化策略。
 - overscan 的單位、範圍與調整策略。
-- shaping、line breaking、extent、paint 與 hit-test index 的失效傳播。
-- 巢狀容器的失效停止條件與 reference view 的 cache key。
 
 ## 被淘汰的方案
 

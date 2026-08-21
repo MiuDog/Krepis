@@ -5,7 +5,7 @@
 - 說明 FlowSequence、LocationIndex、LeafKey 與 TreeCursor 如何合作。
 - 說明插入、leaf split、局部 relabel、redistribution 與 merge 的演算法流程。
 - SpatialContainer 不使用 LeafKey；其唯一位置權威是 placement，本文件只處理 FlowContainer。
-- Leaf 容量、fanout、low-water mark 與 relabel window 是 benchmark 參數，不在本文件猜定。
+- Leaf 容量 64、fanout 32、low-water mark 24 與 relabel 初始 window 64 均由 benchmark 定案。
 
 ## 單一權威與查找資料流
 
@@ -52,8 +52,11 @@ flowchart TD
   capacity -->|no| expand["Expand window geometrically"]
   expand --> capacity
   capacity -->|yes| relabel["Redistribute keys evenly"]
-  midpoint --> update["Update changed LocationIndex entries"]
-  relabel --> update
+  relabel --> edit["FlowSequenceInsertResult with source root and locator updates"]
+  midpoint --> edit
+  edit --> guard{"Current root still equals source root?"}
+  guard -->|no| reject["Reject as revision conflict"]
+  guard -->|yes| update["COW update changed LocationIndex pages"]
   update --> publish["Publish sequence and index in one snapshot"]
 ```
 
@@ -78,8 +81,14 @@ right leaf 取得 1500
 局部 relabel：1000, 2000, 3000, 4000
 ```
 
-如果目前 window 的 128-bit 區間仍不足，就把 window 大小幾何擴張，例如 4、8、16 個 leaves，直到
-能重新留下間距。受影響 leaves 中所有 LocationIndex entries 必須同 transaction 更新。
+初始 window 為實測定案的 **64 leaves**。如果目前 window 的 128-bit 區間仍不足，就把 window
+大小幾何擴張，例如 64、128、256 個 leaves，直到每個相鄰 key 間仍能留下至少一個 midpoint。
+受影響 leaves 中所有 LocationIndex entries 必須同 transaction 更新。
+
+插入不直接只回傳新 root；typed edit result 同時攜帶來源 root、所有需要改 locator 的 Block 與
+relabel 診斷。DocumentRevision 只接受來源 root 仍等於目前 Container root 的結果，避免稍早算出的
+relabel 覆蓋較新的順序。具體而言，若 worker 以 `root R10` 算出更新，但 authority 已發布
+`root R11`，結果是 `revision_conflict`，不是嘗試把兩份 leaf key 合併。
 
 ## ObjectSlot-indexed LocationIndex
 
@@ -200,6 +209,5 @@ LocationIndex 更新震盪。
 
 ## 尚未表達
 
-- Leaf 容量、internal fanout、low-water mark 與 relabel window 的實測數值。
 - Spatial placement index 的具體資料結構。
 - 載入時全量重建 LocationIndex 的序列化邊界。

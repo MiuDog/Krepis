@@ -14,15 +14,23 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <vector>
 
 namespace krepis {
 
+enum class MeasurementStatus : std::uint8_t {
+	estimated,
+	measured,
+};
+
 struct LayoutEntry {
     BlockId block_id;
     double measured_height = 0.0;
+	std::uint64_t source_content_revision = 0;
+	MeasurementStatus status = MeasurementStatus::measured;
 };
 
 class FlowLayoutNode : public RefCounted {
@@ -99,6 +107,12 @@ public:
 
     // 更新 position 的 measured_height。前置條件：position < block_count()。
     [[nodiscard]] FlowLayoutIndex update_extent(std::size_t position, double new_height) const;
+
+	// 保留舊高度作 estimate，只把目標 entry 標為待重測並綁定來源 revision。
+	[[nodiscard]] FlowLayoutIndex invalidate_extent(
+		std::size_t position,
+		std::uint64_t source_content_revision
+	) const;
 
     // 前 position 個 block 的累積高度。前置條件：position <= block_count()。
     [[nodiscard]] double prefix_extent(std::size_t position) const;

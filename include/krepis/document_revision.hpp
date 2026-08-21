@@ -12,14 +12,18 @@
 // 「新順序配舊內容」或「舊順序配新內容」的混合狀態（D8）。
 
 #include "krepis/flow_sequence.hpp"
+#include "krepis/error.hpp"
 #include "krepis/intrusive_ptr.hpp"
 #include "krepis/location_index.hpp"
 #include "krepis/object_id.hpp"
 #include "krepis/object_store.hpp"
+#include "krepis/reference_index.hpp"
 #include "krepis/snapshot_id.hpp"
+#include "krepis/spatial_container.hpp"
 
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -35,6 +39,8 @@ struct RevisionValidation {
         owner_mismatch,
         // LocationIndex 記載的 leaf key 與該 Block 實際所在的 leaf 不符。
         leaf_key_mismatch,
+		// SpatialLocator 的 placement key 與 owner root 不一致。
+		spatial_placement_mismatch,
         // Block 的 ObjectId 無法解析為 slot。
         unresolved_block_id,
     };
@@ -44,6 +50,17 @@ struct RevisionValidation {
     ContainerId offending_container{};
 
     [[nodiscard]] bool ok() const noexcept { return failure == Failure::none; }
+};
+
+struct RecordUpdate {
+	BlockId block;
+	IntrusivePtr<const ObjectRecord> record;
+};
+
+struct FlowRecordMutation {
+	BlockId block;
+	IntrusivePtr<const ObjectRecord> record;
+	bool tombstone = false;
 };
 
 // 一次 authority 發布的完整、不可變文件狀態。
@@ -63,11 +80,19 @@ public:
     [[nodiscard]] const IdDirectory& directory() const noexcept { return *directory_; }
     [[nodiscard]] const ObjectStoreSnapshot& store() const noexcept { return store_; }
     [[nodiscard]] const LocationIndex& locations() const noexcept { return locations_; }
+	[[nodiscard]] const ReferenceIndex& references() const noexcept { return *references_; }
 
     // 取得某個 Container 的 FlowSequence。不存在時回傳 nullptr。
     [[nodiscard]] const FlowSequence* flow_root(ContainerId container) const;
+	[[nodiscard]] const SpatialContainer* spatial_root(ContainerId container) const;
 
     [[nodiscard]] std::size_t container_count() const noexcept { return flow_roots_.size(); }
+	// 前置條件：index < container_count()。只供序列化與診斷列舉，不具有順序語意。
+	[[nodiscard]] ContainerId container_id_at(std::size_t index) const;
+	[[nodiscard]] std::size_t spatial_container_count() const noexcept {
+		return spatial_roots_.size();
+	}
+	[[nodiscard]] ContainerId spatial_container_id_at(std::size_t index) const;
 
     // 解析 BlockId 為 slot。找不到回傳 invalid_object_slot。
     [[nodiscard]] ObjectSlot resolve(BlockId block) const;
@@ -88,6 +113,18 @@ public:
     [[nodiscard]] DocumentRevision with_updated_record(
         BlockId block, IntrusivePtr<const ObjectRecord> record) const;
 
+	// 先驗證全部目標，再以單一 content revision 發布所有 record 更新。
+	// 任一目標不存在或 record 為 null 時不產生部分 revision。
+	[[nodiscard]] Result<DocumentRevision> with_updated_records(
+		std::span<const RecordUpdate> updates
+	) const;
+	// 在一個 content revision 內同時更新 Flow 順序、record 與 LocationIndex。
+	[[nodiscard]] Result<DocumentRevision> with_atomic_flow_edit(
+		ContainerId container,
+		FlowSequence sequence,
+		std::span<const FlowRecordMutation> mutations
+	) const;
+
     // 刪除物件：寫入 tombstone 並清除位置索引。
     [[nodiscard]] DocumentRevision with_deleted_object(BlockId block) const;
 
@@ -95,6 +132,21 @@ public:
     // 這是唯一會同時改動順序與位置索引的入口——D12 要求兩者在同一交易內更新。
     [[nodiscard]] DocumentRevision with_flow_root(ContainerId container,
                                                   FlowSequence sequence) const;
+	[[nodiscard]] DocumentRevision with_spatial_root(
+		ContainerId container,
+		SpatialContainer spatial
+	) const;
+	// 移出 Flow ownership，並在同一 revision 修復所有引用該來源的 range endpoints。
+	// delete_record 為 true 時同時把被移除 Block 寫成 tombstone。
+	[[nodiscard]] Result<DocumentRevision> with_flow_block_removal(
+		ContainerId container,
+		BlockId block,
+		bool delete_record
+	) const;
+
+    // D22：只套用 typed edit 明列的 locator 更新。來源 root 不符時整筆拒絕。
+    [[nodiscard]] Result<DocumentRevision> with_flow_insert(
+        ContainerId container, const FlowSequenceInsertResult& edit) const;
 
     // 不改內容的內部重排（compact／LeafKey 全域重建）：只遞增 storage_generation。
     [[nodiscard]] DocumentRevision with_storage_rebuild() const;
@@ -107,10 +159,13 @@ public:
 
 private:
     using FlowRootEntry = std::pair<ContainerId, FlowSequence>;
+	using SpatialRootEntry = std::pair<ContainerId, SpatialContainer>;
 
     DocumentRevision(SnapshotId snapshot_id, IntrusivePtr<const IdDirectory> directory,
                      ObjectStoreSnapshot store, LocationIndex locations,
-                     std::vector<FlowRootEntry> flow_roots) noexcept;
+                     std::vector<FlowRootEntry> flow_roots,
+	                 std::vector<SpatialRootEntry> spatial_roots,
+	                 IntrusivePtr<const ReferenceIndex> references) noexcept;
 
     [[nodiscard]] SnapshotId next_content_revision() const noexcept;
 
@@ -121,6 +176,8 @@ private:
     // Container 數量遠少於 Block 數量，線性搜尋足夠；
     // 若容器數成長到需要索引，應以量測驅動而非預先最佳化。
     std::vector<FlowRootEntry> flow_roots_;
+	std::vector<SpatialRootEntry> spatial_roots_;
+	IntrusivePtr<const ReferenceIndex> references_;
 };
 
 }  // namespace krepis

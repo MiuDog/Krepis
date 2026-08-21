@@ -210,6 +210,138 @@ void test_large_sequence() {
     expect(all_correct, "1000 個 block 全部可正確取回");
 }
 
+// LAY-0002 D13：連續尾插會反覆切半最後一個 LeafKey 到 max 的間距。
+// 舊實作約在數千個 Block 內耗盡間距並 assertion；局部 relabel 必須讓順序繼續成長。
+void test_tail_insert_survives_leaf_key_gap_exhaustion() {
+    auto seq = FlowSequence::empty();
+    constexpr std::size_t count = 5000;
+
+    for (std::size_t i = 0; i < count; ++i) {
+        seq = seq.insert(seq.block_count(), make_block(i + 1));
+    }
+
+    expect(seq.block_count() == count, "LeafKey 間距耗盡後仍可完成 5000 次尾插");
+    expect(seq.at(0) == make_block(1), "relabel 後第一個 Block 不變");
+    expect(seq.at(count - 1) == make_block(count), "relabel 後最後一個 Block 正確");
+}
+
+void expect_strict_leaf_key_order(const FlowSequence& seq, const char* message) {
+    if (seq.is_empty()) {
+        expect(true, message);
+        return;
+    }
+
+    auto previous = seq.leaf_key_at(0);
+    bool ordered = true;
+    for (std::size_t i = 1; i < seq.block_count(); ++i) {
+        const auto current = seq.leaf_key_at(i);
+        if (current != previous) {
+            if (!(previous < current)) {
+                ordered = false;
+                break;
+            }
+            previous = current;
+        }
+    }
+    expect(ordered, message);
+}
+
+void expect_every_block_id_once(
+    const FlowSequence& seq, std::size_t count, const char* message) {
+    std::vector<bool> seen(count + 1, false);
+    bool valid = seq.block_count() == count;
+    for (std::size_t i = 0; valid && i < seq.block_count(); ++i) {
+        const auto value = seq.at(i).raw().low;
+        if (value == 0 || value > count || seen[static_cast<std::size_t>(value)]) {
+            valid = false;
+            break;
+        }
+        seen[static_cast<std::size_t>(value)] = true;
+    }
+    expect(valid, message);
+}
+
+void test_relabel_reports_bounded_locator_updates() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+    config.merge_low_water = 1;
+    config.initial_relabel_window = 8;
+
+    auto seq = FlowSequence::empty(config);
+    bool observed = false;
+    for (std::size_t i = 0; i < 1000; ++i) {
+        const auto previous = seq;
+        const auto previous_root = seq.root();
+        auto edit = seq.insert_with_updates(seq.block_count(), make_block(i + 1));
+        if (edit.diagnostics().relabeled_leaf_count > 0) {
+            observed = true;
+            expect(edit.source_root().get() == previous_root.get(),
+                   "typed edit 保存產生結果時的來源 root");
+            expect(edit.diagnostics().relabel_window == config.initial_relabel_window,
+                   "第一次尾端 relabel 留在初始 bounded window");
+            expect(edit.diagnostics().relabeled_leaf_count <=
+                       edit.diagnostics().relabel_window,
+                   "實際 relabel leaf 數不超過 window");
+            expect(!edit.diagnostics().global_rebuild,
+                   "局部 window 足夠時不標記 global rebuild");
+            expect(previous.root().get() == previous_root.get() &&
+                       previous.block_count() + 1 == edit.sequence().block_count(),
+                   "relabel 不原地改寫舊 snapshot");
+            expect_strict_leaf_key_order(previous, "舊 snapshot 的 LeafKey 順序保持有效");
+
+            bool updates_valid = true;
+            for (const auto& update : edit.locator_updates()) {
+                if (!edit.sequence().find_block_in_leaf(update.leaf_key, update.block).has_value()) {
+                    updates_valid = false;
+                    break;
+                }
+            }
+            expect(updates_valid, "每個 locator update 都指向新 sequence 的實際 leaf");
+            seq = std::move(edit).take_sequence();
+            break;
+        }
+        seq = std::move(edit).take_sequence();
+    }
+    expect(observed, "壓縮 LeafKey 間距後可觀察到局部 relabel 診斷");
+}
+
+void test_hundred_thousand_inserts_preserve_order() {
+#ifdef NDEBUG
+    constexpr std::size_t count = 100000;
+#else
+    // Debug／sanitizer 已由 focused tests 強迫走 relabel 分支；容量 gate 留在 Release，
+    // 避免 assertion 與 instrumentation 將三種 100k workload 放大成 CI 的主要成本。
+    constexpr std::size_t count = 10000;
+#endif
+
+    auto tail = FlowSequence::empty();
+    for (std::size_t i = 0; i < count; ++i) {
+        tail = tail.insert(tail.block_count(), make_block(i + 1));
+    }
+    expect(tail.at(0) == make_block(1) && tail.at(count - 1) == make_block(count),
+           "大量尾插維持順序");
+    expect_strict_leaf_key_order(tail, "大量尾插後 LeafKey 嚴格遞增");
+    expect_every_block_id_once(tail, count, "大量尾插沒有遺失或重複 BlockId");
+
+    auto head = FlowSequence::empty();
+    for (std::size_t i = 0; i < count; ++i) {
+        head = head.insert(0, make_block(i + 1));
+    }
+    expect(head.at(0) == make_block(count) && head.at(count - 1) == make_block(1),
+           "大量頭插維持順序");
+    expect_strict_leaf_key_order(head, "大量頭插後 LeafKey 嚴格遞增");
+    expect_every_block_id_once(head, count, "大量頭插沒有遺失或重複 BlockId");
+
+    auto middle = FlowSequence::empty();
+    for (std::size_t i = 0; i < count; ++i) {
+        middle = middle.insert(middle.block_count() / 2, make_block(i + 1));
+    }
+    expect(middle.block_count() == count, "大量中間插入後數量正確");
+    expect_strict_leaf_key_order(middle, "大量中間插入後 LeafKey 嚴格遞增");
+    expect_every_block_id_once(middle, count, "大量中間插入沒有遺失或重複 BlockId");
+}
+
 // --- TreeCursor tests ---
 
 void test_cursor_single_element() {
@@ -579,6 +711,27 @@ void test_find_by_key_not_found() {
     expect(pos == seq.block_count(), "不存在的 key 回傳 past-the-end");
 }
 
+void test_find_block_in_leaf_across_deep_tree() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+    config.merge_low_water = 1;
+    auto seq = FlowSequence::empty(config);
+    constexpr std::size_t count = 100;
+    constexpr std::size_t target = 81;
+    for (std::size_t i = 0; i < count; ++i) {
+        seq = seq.insert(seq.block_count(), make_block(i + 1));
+    }
+
+    const auto key = seq.leaf_key_at(target);
+    const auto found = seq.find_block_in_leaf(key, make_block(target + 1));
+    expect(found.has_value() && *found == target,
+           "深樹依 LeafKey 與 BlockId 找到正確全域 rank");
+
+    const auto wrong_block = seq.find_block_in_leaf(key, make_block(count + 1));
+    expect(!wrong_block.has_value(), "指定 leaf 不含 BlockId 時回傳空值");
+}
+
 // --- D17 Gate 3: snapshot parallel traversal ---
 
 std::uint64_t compute_snapshot_hash(const FlowSequence& seq) {
@@ -679,6 +832,9 @@ int main() {
     test_remove_across_leaves();
     test_interleaved_insert_remove();
     test_large_sequence();
+    test_tail_insert_survives_leaf_key_gap_exhaustion();
+    test_relabel_reports_bounded_locator_updates();
+    test_hundred_thousand_inserts_preserve_order();
     test_reclamation_accounting();
 
     test_merge_on_underflow();
@@ -691,6 +847,7 @@ int main() {
     test_find_by_key_roundtrip();
     test_leaf_keys_stable_across_unrelated_inserts();
     test_find_by_key_not_found();
+    test_find_block_in_leaf_across_deep_tree();
 
     test_snapshot_parallel_traversal();
 

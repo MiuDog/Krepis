@@ -66,6 +66,11 @@ void test_error_codes_are_stable() {
     expect(static_cast<int>(ErrorCode::invalid_state) == 4, "invalid_state 為 4");
     expect(static_cast<int>(ErrorCode::unsupported) == 5, "unsupported 為 5");
     expect(static_cast<int>(ErrorCode::version_mismatch) == 6, "version_mismatch 為 6");
+    expect(static_cast<int>(ErrorCode::revision_conflict) == 7, "revision_conflict 為 7");
+    expect(static_cast<int>(ErrorCode::missing_glyph) == 8, "missing_glyph 為 8");
+
+    const Error located{ErrorCode::missing_glyph, "缺字", 42};
+    expect(located.has_context() && located.context() == 42, "Error 可攜帶機器可判斷的數值 context");
 }
 
 }  // namespace

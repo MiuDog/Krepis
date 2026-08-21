@@ -25,13 +25,18 @@ enum class ErrorCode : std::uint32_t {
     invalid_state = 4,     // 目標物件當前狀態不允許此操作
     unsupported = 5,       // 此建置或此平台不支援
     version_mismatch = 6,  // 核心與呼叫端的契約版本不符
+    revision_conflict = 7, // Transaction 的 base content revision 已過期
+    missing_glyph = 8,     // 所有候選字型都缺少指定 grapheme
+    io_failure = 9,        // 檔案或作業系統 I/O 失敗
+    corrupt_data = 10,     // 外部資料截斷、毀損或違反格式 invariant
 };
 
 // 一次可恢復失敗的完整描述。
 //
 // 責任：攜帶機器可判斷的失敗分類，以及僅供除錯的靜態說明。
 // 不負責：攜帶可變長度或需配置的訊息 —— 那會使錯誤路徑本身可能失敗。
-// 維持的不變條件：`code` 永遠是有效的 ErrorCode；`detail` 若非 nullptr 則指向靜態儲存期字串。
+// 維持的不變條件：`code` 永遠是有效的 ErrorCode；`detail` 若非 nullptr 則指向靜態儲存期字串；
+// `has_context()` 為 true 時 context 是該 code 定義的機器可判斷數值。
 // 擁有哪些資源：無。
 // 生命週期：值型別，可自由複製與保存。
 // 錯誤語意：本身即錯誤描述。
@@ -42,16 +47,27 @@ public:
     // detail 必須是**靜態儲存期**的字串（字面值或全域常數）；
     // 傳入區域緩衝區會產生懸空指標。
     constexpr explicit Error(ErrorCode code, const char* detail = nullptr) noexcept
-        : code_(code), detail_(detail) {}
+        : code_(code), detail_(detail), context_(0), has_context_(false) {}
+
+    // context 是與錯誤類型相關的機器可判斷數值；例如 missing_glyph 的 UTF-8 byte offset。
+    constexpr Error(ErrorCode code, const char* detail, std::uint64_t context) noexcept
+        : code_(code), detail_(detail), context_(context), has_context_(true) {}
 
     [[nodiscard]] constexpr ErrorCode code() const noexcept { return code_; }
 
     // 僅供人閱讀與紀錄。**不得用於控制流程。**
     [[nodiscard]] constexpr const char* detail() const noexcept { return detail_; }
+    [[nodiscard]] constexpr bool has_context() const noexcept { return has_context_; }
+    [[nodiscard]] constexpr std::uint64_t context() const noexcept {
+        assert(has_context_ && "錯誤沒有數值 context");
+        return context_;
+    }
 
 private:
     ErrorCode code_;
     const char* detail_;
+    std::uint64_t context_;
+    bool has_context_;
 };
 
 // 成功值為 T、失敗為 Error 的結果型別。

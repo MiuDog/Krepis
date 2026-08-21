@@ -39,6 +39,25 @@ add_test(NAME krepis.ink_types COMMAND krepis_ink_types_test)
 krepis_add_test(krepis_document_revision_test document_revision_test.cpp)
 add_test(NAME krepis.document_revision COMMAND krepis_document_revision_test)
 
+krepis_add_test(krepis_dogfood_file_test dogfood_file_test.cpp)
+add_test(NAME krepis.dogfood_file COMMAND krepis_dogfood_file_test)
+
+krepis_add_test(krepis_display_list_test display_list_test.cpp)
+add_test(NAME krepis.display_list COMMAND krepis_display_list_test)
+
+add_executable(krepis_c_abi_test c_abi_test.c)
+target_link_libraries(krepis_c_abi_test PRIVATE krepis_c)
+target_include_directories(krepis_c_abi_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(krepis_c_abi_test PRIVATE
+    KREPIS_TEST_C_ABI_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+)
+if(MSVC)
+    target_compile_options(krepis_c_abi_test PRIVATE /W4)
+else()
+    target_compile_options(krepis_c_abi_test PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME krepis.c_abi COMMAND krepis_c_abi_test)
+
 krepis_add_test(krepis_location_index_test location_index_test.cpp)
 add_test(NAME krepis.location_index COMMAND krepis_location_index_test)
 
@@ -47,3 +66,66 @@ add_test(NAME krepis.flow_layout_index COMMAND krepis_flow_layout_index_test)
 
 krepis_add_test(krepis_flow_sequence_test flow_sequence_test.cpp)
 add_test(NAME krepis.flow_sequence COMMAND krepis_flow_sequence_test)
+
+krepis_add_test(krepis_paragraph_record_test paragraph_record_test.cpp)
+add_test(NAME krepis.paragraph_record COMMAND krepis_paragraph_record_test)
+
+krepis_add_test(krepis_utf8_test utf8_test.cpp)
+add_test(NAME krepis.utf8 COMMAND krepis_utf8_test)
+
+krepis_add_test(krepis_text_analysis_test text_analysis_test.cpp)
+add_test(NAME krepis.text_analysis COMMAND krepis_text_analysis_test)
+
+krepis_add_test(krepis_text_shaper_test text_shaper_test.cpp)
+target_compile_definitions(krepis_text_shaper_test PRIVATE
+    KREPIS_TEST_LATIN_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+    KREPIS_TEST_HAN_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/SourceHanSans-Regular_subset.otf"
+    KREPIS_TEST_ARABIC_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Amiri-Regular.ttf"
+)
+add_test(NAME krepis.text_shaper COMMAND krepis_text_shaper_test)
+
+krepis_add_test(krepis_text_layout_test text_layout_test.cpp)
+target_compile_definitions(krepis_text_layout_test PRIVATE
+    KREPIS_TEST_LATIN_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+)
+add_test(NAME krepis.text_layout COMMAND krepis_text_layout_test)
+
+krepis_add_test(krepis_glyph_outline_test glyph_outline_test.cpp)
+target_compile_definitions(krepis_glyph_outline_test PRIVATE
+    KREPIS_TEST_OUTLINE_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+)
+add_test(NAME krepis.glyph_outline COMMAND krepis_glyph_outline_test)
+
+krepis_add_test(krepis_display_list_layout_test display_list_layout_test.cpp)
+target_compile_definitions(krepis_display_list_layout_test PRIVATE
+    KREPIS_TEST_DISPLAY_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+)
+add_test(NAME krepis.display_list_layout COMMAND krepis_display_list_layout_test)
+
+krepis_add_test(krepis_flow_editor_test flow_editor_test.cpp)
+target_compile_definitions(krepis_flow_editor_test PRIVATE
+    KREPIS_TEST_EDITOR_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+    KREPIS_TEST_EDITOR_HAN_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/SourceHanSans-Regular_subset.otf"
+)
+add_test(NAME krepis.flow_editor COMMAND krepis_flow_editor_test)
+
+krepis_add_test(krepis_transaction_test transaction_test.cpp)
+add_test(NAME krepis.transaction COMMAND krepis_transaction_test)
+
+krepis_add_test(krepis_editing_test editing_test.cpp)
+add_test(NAME krepis.editing COMMAND krepis_editing_test)
+
+krepis_add_test(krepis_editing_session_test editing_session_test.cpp)
+add_test(NAME krepis.editing_session COMMAND krepis_editing_session_test)
+
+krepis_add_test(krepis_undo_test undo_test.cpp)
+add_test(NAME krepis.undo COMMAND krepis_undo_test)
+
+krepis_add_test(krepis_layout_invalidation_test layout_invalidation_test.cpp)
+add_test(NAME krepis.layout_invalidation COMMAND krepis_layout_invalidation_test)
+
+krepis_add_test(krepis_spatial_container_test spatial_container_test.cpp)
+add_test(NAME krepis.spatial_container COMMAND krepis_spatial_container_test)
+
+krepis_add_test(krepis_reference_resolver_test reference_resolver_test.cpp)
+add_test(NAME krepis.reference_resolver COMMAND krepis_reference_resolver_test)
