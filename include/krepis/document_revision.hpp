@@ -12,6 +12,7 @@
 // 「新順序配舊內容」或「舊順序配新內容」的混合狀態（D8）。
 
 #include "krepis/flow_sequence.hpp"
+#include "krepis/error.hpp"
 #include "krepis/intrusive_ptr.hpp"
 #include "krepis/location_index.hpp"
 #include "krepis/object_id.hpp"
@@ -20,6 +21,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -44,6 +46,11 @@ struct RevisionValidation {
     ContainerId offending_container{};
 
     [[nodiscard]] bool ok() const noexcept { return failure == Failure::none; }
+};
+
+struct RecordUpdate {
+	BlockId block;
+	IntrusivePtr<const ObjectRecord> record;
 };
 
 // 一次 authority 發布的完整、不可變文件狀態。
@@ -87,6 +94,12 @@ public:
     // 修改既有物件的記錄。前置條件：block 已配置 slot。
     [[nodiscard]] DocumentRevision with_updated_record(
         BlockId block, IntrusivePtr<const ObjectRecord> record) const;
+
+	// 先驗證全部目標，再以單一 content revision 發布所有 record 更新。
+	// 任一目標不存在或 record 為 null 時不產生部分 revision。
+	[[nodiscard]] Result<DocumentRevision> with_updated_records(
+		std::span<const RecordUpdate> updates
+	) const;
 
     // 刪除物件：寫入 tombstone 並清除位置索引。
     [[nodiscard]] DocumentRevision with_deleted_object(BlockId block) const;

@@ -61,6 +61,36 @@ DocumentRevision DocumentRevision::with_updated_record(
                             flow_roots_);
 }
 
+Result<DocumentRevision> DocumentRevision::with_updated_records(
+	std::span<const RecordUpdate> updates
+) const {
+	// 步驟 1：在建立任何新 store path 前驗證所有目標。
+	for (const auto& update : updates) {
+		if (update.record == nullptr) {
+			return Error{ErrorCode::invalid_argument, "批次 record 更新不得包含 null"};
+		}
+
+		const auto slot = resolve(update.block);
+		if (!slot.is_valid() || !store_.contains(slot)) {
+			return Error{ErrorCode::not_found, "批次 record 更新的 Block 不存在"};
+		}
+	}
+
+	// 步驟 2：只在全部驗證成功後建立新的 COW store，最後增加一次 revision。
+	auto new_store = store_;
+	for (const auto& update : updates) {
+		new_store = new_store.with_record(resolve(update.block), update.record);
+	}
+
+	return DocumentRevision(
+		next_content_revision(),
+		directory_,
+		std::move(new_store),
+		locations_,
+		flow_roots_
+	);
+}
+
 DocumentRevision DocumentRevision::with_deleted_object(BlockId block) const {
     const auto slot = resolve(block);
     assert(slot.is_valid() && "刪除前必須先配置 slot");

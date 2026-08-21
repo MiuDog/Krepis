@@ -25,6 +25,7 @@ enum class ErrorCode : std::uint32_t {
     invalid_state = 4,     // 目標物件當前狀態不允許此操作
     unsupported = 5,       // 此建置或此平台不支援
     version_mismatch = 6,  // 核心與呼叫端的契約版本不符
+    revision_conflict = 7, // Transaction 的 base content revision 已過期
 };
 
 // 一次可恢復失敗的完整描述。
