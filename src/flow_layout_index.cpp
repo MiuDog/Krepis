@@ -172,14 +172,16 @@ IntrusivePtr<const FlowLayoutNode> remove_from(const FlowLayoutNode* node,
     return make_intrusive<FlowLayoutInternal>(std::move(new_children));
 }
 
-IntrusivePtr<const FlowLayoutNode> update_height(const FlowLayoutNode* node,
-                                                  std::size_t position,
-                                                  double new_height) {
+IntrusivePtr<const FlowLayoutNode> update_entry(
+	const FlowLayoutNode* node,
+	std::size_t position,
+	LayoutEntry replacement
+) {
     if (node->is_leaf()) {
         const auto* leaf = static_cast<const FlowLayoutLeaf*>(node);
         auto entries = std::vector<LayoutEntry>(leaf->entries().begin(), leaf->entries().end());
         assert(position < entries.size());
-        entries[position].measured_height = new_height;
+		entries[position] = std::move(replacement);
         return make_intrusive<FlowLayoutLeaf>(std::move(entries));
     }
 
@@ -189,7 +191,11 @@ IntrusivePtr<const FlowLayoutNode> update_height(const FlowLayoutNode* node,
     std::size_t remaining = position;
     std::size_t child_idx = find_child_for_position(children, remaining);
 
-    auto new_child = update_height(children[child_idx].child.get(), remaining, new_height);
+	auto new_child = update_entry(
+		children[child_idx].child.get(),
+		remaining,
+		std::move(replacement)
+	);
 
     std::vector<LayoutChildEntry> new_children;
     new_children.reserve(children.size());
@@ -257,8 +263,23 @@ FlowLayoutIndex FlowLayoutIndex::remove(std::size_t position) const {
 
 FlowLayoutIndex FlowLayoutIndex::update_extent(std::size_t position, double new_height) const {
     assert(root_ && position < block_count());
-    auto new_root = update_height(root_.get(), position, new_height);
+	auto replacement = at(position);
+	replacement.measured_height = new_height;
+	replacement.status = MeasurementStatus::measured;
+	auto new_root = update_entry(root_.get(), position, std::move(replacement));
     return FlowLayoutIndex(config_, std::move(new_root));
+}
+
+FlowLayoutIndex FlowLayoutIndex::invalidate_extent(
+	std::size_t position,
+	std::uint64_t source_content_revision
+) const {
+	assert(root_ && position < block_count());
+	auto replacement = at(position);
+	replacement.source_content_revision = source_content_revision;
+	replacement.status = MeasurementStatus::estimated;
+	auto new_root = update_entry(root_.get(), position, std::move(replacement));
+	return FlowLayoutIndex(config_, std::move(new_root));
 }
 
 double FlowLayoutIndex::prefix_extent(std::size_t position) const {

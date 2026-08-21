@@ -9,6 +9,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -111,6 +112,13 @@ public:
     // 依 LeafKey 尋找該 leaf 的起始 rank（第一個 block 的 position）。
     // 找不到回傳 block_count()（等同 past-the-end）。
     [[nodiscard]] std::size_t find_by_key(const LeafKey& key) const;
+
+	// 依 LocationIndex 的 LeafKey 在單一 leaf 內尋找 Block，成功回傳全域 rank。
+	// 成本為 O(tree height + leaf capacity)，不掃描整份文件。
+	[[nodiscard]] std::optional<std::size_t> find_block_in_leaf(
+		const LeafKey& key,
+		BlockId block
+	) const;
 
     // 前置條件：position <= block_count()。回傳包含插入結果的新 FlowSequence。
     [[nodiscard]] FlowSequence insert(std::size_t position, BlockId block_id) const;

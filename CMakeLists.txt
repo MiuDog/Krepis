@@ -41,8 +41,11 @@ target_sources(krepis PRIVATE
     src/id_generator.cpp
     src/ink_types.cpp
     src/leaf_key.cpp
+    src/layout_invalidation.cpp
     src/object_id.cpp
+    src/paragraph_record.cpp
     src/reclamation.cpp
+    src/transaction.cpp
     src/version.cpp
 )
 

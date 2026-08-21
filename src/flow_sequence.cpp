@@ -376,6 +376,42 @@ std::size_t FlowSequence::find_by_key(const LeafKey& key) const {
     return block_count();
 }
 
+std::optional<std::size_t> FlowSequence::find_block_in_leaf(
+	const LeafKey& key,
+	BlockId block
+) const {
+	if (!root_) return std::nullopt;
+
+	const FlowSequenceNode* node = root_.get();
+	std::size_t prefix = 0;
+	while (!node->is_leaf()) {
+		const auto* internal = static_cast<const FlowInternalNode*>(node);
+		auto children = internal->children();
+		std::size_t selected = children.size();
+		for (std::size_t i = children.size(); i > 0; --i) {
+			if (children[i - 1].min_leaf_key <= key) {
+				selected = i - 1;
+				break;
+			}
+		}
+		if (selected == children.size()) return std::nullopt;
+
+		for (std::size_t i = 0; i < selected; ++i) {
+			prefix += children[i].subtree_block_count;
+		}
+		node = children[selected].child.get();
+	}
+
+	const auto* leaf = static_cast<const FlowLeafNode*>(node);
+	if (leaf->key() != key) return std::nullopt;
+
+	auto blocks = leaf->blocks();
+	for (std::size_t i = 0; i < blocks.size(); ++i) {
+		if (blocks[i] == block) return prefix + i;
+	}
+	return std::nullopt;
+}
+
 FlowSequence FlowSequence::insert(std::size_t position, BlockId block_id) const {
     assert(position <= block_count());
 

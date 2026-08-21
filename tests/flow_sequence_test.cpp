@@ -579,6 +579,27 @@ void test_find_by_key_not_found() {
     expect(pos == seq.block_count(), "不存在的 key 回傳 past-the-end");
 }
 
+void test_find_block_in_leaf_across_deep_tree() {
+    FlowSequenceConfig config;
+    config.leaf_capacity = 4;
+    config.internal_fanout = 4;
+    config.merge_low_water = 1;
+    auto seq = FlowSequence::empty(config);
+    constexpr std::size_t count = 100;
+    constexpr std::size_t target = 81;
+    for (std::size_t i = 0; i < count; ++i) {
+        seq = seq.insert(seq.block_count(), make_block(i + 1));
+    }
+
+    const auto key = seq.leaf_key_at(target);
+    const auto found = seq.find_block_in_leaf(key, make_block(target + 1));
+    expect(found.has_value() && *found == target,
+           "深樹依 LeafKey 與 BlockId 找到正確全域 rank");
+
+    const auto wrong_block = seq.find_block_in_leaf(key, make_block(count + 1));
+    expect(!wrong_block.has_value(), "指定 leaf 不含 BlockId 時回傳空值");
+}
+
 // --- D17 Gate 3: snapshot parallel traversal ---
 
 std::uint64_t compute_snapshot_hash(const FlowSequence& seq) {
@@ -691,6 +712,7 @@ int main() {
     test_find_by_key_roundtrip();
     test_leaf_keys_stable_across_unrelated_inserts();
     test_find_by_key_not_found();
+    test_find_block_in_leaf_across_deep_tree();
 
     test_snapshot_parallel_traversal();
 

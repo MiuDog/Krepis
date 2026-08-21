@@ -47,3 +47,12 @@ add_test(NAME krepis.flow_layout_index COMMAND krepis_flow_layout_index_test)
 
 krepis_add_test(krepis_flow_sequence_test flow_sequence_test.cpp)
 add_test(NAME krepis.flow_sequence COMMAND krepis_flow_sequence_test)
+
+krepis_add_test(krepis_paragraph_record_test paragraph_record_test.cpp)
+add_test(NAME krepis.paragraph_record COMMAND krepis_paragraph_record_test)
+
+krepis_add_test(krepis_transaction_test transaction_test.cpp)
+add_test(NAME krepis.transaction COMMAND krepis_transaction_test)
+
+krepis_add_test(krepis_layout_invalidation_test layout_invalidation_test.cpp)
+add_test(NAME krepis.layout_invalidation COMMAND krepis_layout_invalidation_test)
