@@ -3,10 +3,11 @@ cmake_minimum_required(VERSION 3.24)
 project(krepis
     VERSION 0.0.1
     DESCRIPTION "結構化筆記基座：權威狀態、文件模型、版面、選取、undo 與 ink 資料模型"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 find_package(Threads REQUIRED)
+include(cmake/KrepisTextDependencies.cmake)
 
 # 本專案為基座庫，可被其他專案 add_subdirectory 引入；只有作為頂層專案時才建置測試。
 if(PROJECT_IS_TOP_LEVEL)
@@ -46,6 +47,8 @@ target_sources(krepis PRIVATE
     src/paragraph_record.cpp
     src/reclamation.cpp
     src/transaction.cpp
+    src/text_analysis.cpp
+    src/utf8.cpp
     src/version.cpp
 )
 
@@ -55,7 +58,10 @@ target_include_directories(krepis PUBLIC
 )
 
 target_compile_features(krepis PUBLIC cxx_std_20)
-target_link_libraries(krepis PUBLIC Threads::Threads)
+target_link_libraries(krepis
+    PUBLIC Threads::Threads
+    PRIVATE harfbuzz krepis_text_unibreak krepis_text_sheenbidi
+)
 
 if(MSVC)
     # /W4 為警告基線；/permissive- 關閉 MSVC 的寬鬆一致性模式，避免寫出不可攜的程式碼。

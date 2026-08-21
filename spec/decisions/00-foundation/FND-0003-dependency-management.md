@@ -89,9 +89,9 @@ Accepted
 
 ## 附帶觀察
 
-`TXT` 第一版採 DirectWrite（自帶 shaping 與字型 fallback）**使本決策在 P0–P4 完全不被觸發**——
-不需 HarfBuzz、不需 ICU。這是「先用平台原生」除了 CJK fallback 之外的第二個收益，
-當初未計入。
+這項早期觀察已被後續實測取代：`TXT-0001` 正式選定 HarfBuzz 10.1.0、libunibreak 6.1 與
+SheenBidi 2.8 的單一跨平台 stack，因此 P1 即會觸發本決策。三者必須 pin commit SHA、以 Krepis
+toolchain 編譯並隔離上游 install／ALL；不引入 ICU，所以不觸發重新評估 vcpkg 的條件。
 
 ## 相關決策
 
