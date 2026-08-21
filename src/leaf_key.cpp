@@ -32,6 +32,10 @@ struct U128 {
     return a.high == 0 && a.low == 0;
 }
 
+[[nodiscard]] bool is_less_than_two(const U128& a) noexcept {
+    return a.high == 0 && a.low < 2;
+}
+
 // 128-bit 除以 64-bit，回傳商。divisor 不得為零。
 //
 // 逐位長除法。餘數恆小於 divisor（< 2^64），因此可用單一 uint64_t 保存；
@@ -106,8 +110,9 @@ bool leaf_key_distribute(const LeafKey& left, const LeafKey& right, std::size_t 
     }
 
     const U128 step = divide(gap, segments);
-    if (is_zero(step)) {
-        // 區間容不下 count 個相異標籤；呼叫端必須擴張 window。
+    if (is_less_than_two(step)) {
+        // step=1 雖能產生相異標籤，卻會讓相鄰標籤沒有下一次 split 的中點。
+        // D22 要求 relabel 後立刻重試 split，因此必須擴張 window。
         return false;
     }
 

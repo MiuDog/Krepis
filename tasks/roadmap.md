@@ -65,9 +65,10 @@ revision 發布、typed layout invalidation 與 50,000 Block 局部 COW 更新�
 shaping／line breaking、composition、selection／undo、Spatial layout、display list encoder、C ABI 與
 Flutter／Notist 垂直整合；因此 P1 尚未關閉。
 
-**新發現的 P1 blocker（2026-08-21）**：預設 FlowSequence 連續尾插 5,000 個 Block 時可耗盡相鄰
-LeafKey 間距並觸發 `leaf_key_midpoint` assertion。這不是本次 transaction／invalidation 的回歸，
-但證明 `LAY-0002` 尚未決定的 relabel window 已是可重現缺口；P1 大文件驗收前必須實作並測試。
+**P1 blocker 已修正（2026-08-21）**：預設 FlowSequence 連續尾插 5,000 個 Block 時耗盡相鄰
+LeafKey 間距的 assertion 已由 `LAY-0002` D22 局部 relabel 修正。初始 window 經 benchmark 定案為
+64；100,000 次頭插、尾插與中間插入、舊 snapshot、typed locator update、stale edit 拒絕與
+global storage generation 路徑均有機器測試。跨工具鏈 CI 證據仍需包含此提交後的結果。
 
 #### 驗收條件（全部可機器判定）
 

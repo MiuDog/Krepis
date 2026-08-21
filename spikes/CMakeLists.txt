@@ -117,6 +117,17 @@ if(MSVC)
     target_compile_options(bench_flow_sequence PRIVATE /utf-8 /W4 /permissive-)
 endif()
 
+# Benchmark: LeafKey 局部 relabel 初始 window（LAY-0002 D22）
+add_executable(bench_leaf_key_relabel
+    bench_leaf_key_relabel/bench_leaf_key_relabel.cpp
+)
+
+target_link_libraries(bench_leaf_key_relabel PRIVATE krepis::krepis)
+target_compile_features(bench_leaf_key_relabel PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(bench_leaf_key_relabel PRIVATE /utf-8 /W4 /permissive-)
+endif()
+
 # Spike 5: 跨平台 text shaping（HarfBuzz via FetchContent，依 FND-0003）
 #
 # 刻意預設關閉：FetchContent 會 clone 並建置 HarfBuzz，使一般 configure 變慢。

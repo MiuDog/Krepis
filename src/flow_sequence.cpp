@@ -1,6 +1,8 @@
 #include "krepis/flow_sequence.hpp"
 
+#include <algorithm>
 #include <cassert>
+#include <cstdlib>
 #include <iterator>
 #include <utility>
 
@@ -50,6 +52,152 @@ ChildEntry make_child_entry(IntrusivePtr<const FlowSequenceNode> child) {
     return {std::move(child), count, key};
 }
 
+struct LeafInfo {
+    std::size_t start = 0;
+    std::size_t count = 0;
+    LeafKey key{};
+};
+
+std::size_t find_child_for_position(std::span<const ChildEntry> children,
+                                    std::size_t& remaining);
+
+LeafInfo find_leaf_info(const FlowSequenceNode* root, std::size_t position) {
+    assert(root && position < root->block_count());
+
+    const FlowSequenceNode* node = root;
+    std::size_t remaining = position;
+    std::size_t prefix = 0;
+    while (!node->is_leaf()) {
+        const auto* internal = static_cast<const FlowInternalNode*>(node);
+        bool descended = false;
+        for (const auto& child : internal->children()) {
+            if (remaining < child.subtree_block_count) {
+                node = child.child.get();
+                descended = true;
+                break;
+            }
+            remaining -= child.subtree_block_count;
+            prefix += child.subtree_block_count;
+        }
+        if (!descended) {
+            assert(false && "position 必須落在某個 leaf");
+            std::abort();
+        }
+    }
+
+    const auto* leaf = static_cast<const FlowLeafNode*>(node);
+    return LeafInfo{prefix, leaf->blocks().size(), leaf->key()};
+}
+
+IntrusivePtr<const FlowSequenceNode> replace_leaf_key_at(
+    const FlowSequenceNode* node, std::size_t position, const LeafKey& key) {
+    if (node->is_leaf()) {
+        const auto* leaf = static_cast<const FlowLeafNode*>(node);
+        return make_intrusive<FlowLeafNode>(
+            key, std::vector<BlockId>(leaf->blocks().begin(), leaf->blocks().end()));
+    }
+
+    const auto* internal = static_cast<const FlowInternalNode*>(node);
+    auto old_children = internal->children();
+    std::vector<ChildEntry> children;
+    children.reserve(old_children.size());
+
+    std::size_t remaining = position;
+    const auto selected = find_child_for_position(old_children, remaining);
+    for (std::size_t i = 0; i < old_children.size(); ++i) {
+        if (i == selected) {
+            auto replacement = replace_leaf_key_at(
+                old_children[i].child.get(), remaining, key);
+            children.push_back(make_child_entry(std::move(replacement)));
+        } else {
+            children.push_back(old_children[i]);
+        }
+    }
+    return make_intrusive<FlowInternalNode>(std::move(children));
+}
+
+void set_locator_update(std::vector<FlowLocatorUpdate>& updates,
+                        BlockId block, const LeafKey& key) {
+    for (auto& update : updates) {
+        if (update.block == block) {
+            update.leaf_key = key;
+            return;
+        }
+    }
+    updates.push_back(FlowLocatorUpdate{block, key});
+}
+
+struct RelabelResult {
+    IntrusivePtr<const FlowSequenceNode> root;
+    std::vector<FlowLocatorUpdate> locator_updates;
+    FlowSequenceEditDiagnostics diagnostics;
+};
+
+RelabelResult relabel_for_split(const FlowSequence& sequence, std::size_t target_position) {
+    const auto total = sequence.block_count();
+    assert(total > 0 && target_position < total);
+
+    std::size_t desired = std::max<std::size_t>(1, sequence.config().initial_relabel_window);
+    const auto target = find_leaf_info(sequence.root().get(), target_position);
+
+    while (true) {
+        std::vector<LeafInfo> window{target};
+
+        std::size_t previous_start = target.start;
+        std::size_t next_start = target.start + target.count;
+        while (window.size() < desired && (previous_start > 0 || next_start < total)) {
+            if (previous_start > 0) {
+                const auto previous = find_leaf_info(sequence.root().get(), previous_start - 1);
+                window.insert(window.begin(), previous);
+                previous_start = previous.start;
+            }
+            if (window.size() < desired && next_start < total) {
+                const auto next = find_leaf_info(sequence.root().get(), next_start);
+                window.push_back(next);
+                next_start = next.start + next.count;
+            }
+        }
+
+        const LeafKey left_bound = (window.front().start == 0)
+            ? leaf_key_min
+            : find_leaf_info(sequence.root().get(), window.front().start - 1).key;
+        const auto after_window = window.back().start + window.back().count;
+        const LeafKey right_bound = (after_window == total)
+            ? leaf_key_max
+            : find_leaf_info(sequence.root().get(), after_window).key;
+
+        std::vector<LeafKey> keys(window.size());
+        if (leaf_key_distribute(left_bound, right_bound, window.size(), keys.data())) {
+            RelabelResult result;
+            result.root = sequence.root();
+            result.diagnostics.relabel_window = window.size();
+            result.diagnostics.global_rebuild =
+                window.front().start == 0 && after_window == total;
+
+            for (std::size_t i = 0; i < window.size(); ++i) {
+                if (window[i].key == keys[i]) {
+                    continue;
+                }
+                result.root = replace_leaf_key_at(
+                    result.root.get(), window[i].start, keys[i]);
+                ++result.diagnostics.relabeled_leaf_count;
+                for (std::size_t offset = 0; offset < window[i].count; ++offset) {
+                    set_locator_update(result.locator_updates,
+                                       sequence.at(window[i].start + offset), keys[i]);
+                }
+            }
+            return result;
+        }
+
+        const bool covers_all = window.front().start == 0 && after_window == total;
+        if (covers_all) {
+            assert(false && "完整 128-bit 空間必須容得下記憶體中的 leaves");
+            std::abort();
+        }
+        desired = (desired > total / 2) ? total : desired * 2;
+    }
+}
+
 struct InsertResult {
     IntrusivePtr<const FlowSequenceNode> left;
     IntrusivePtr<const FlowSequenceNode> right;
@@ -71,7 +219,11 @@ InsertResult insert_into_leaf(const FlowLeafNode* leaf, std::size_t position,
     auto right_blocks = std::vector<BlockId>(blocks.begin() + mid, blocks.end());
 
     auto new_key = leaf_key_midpoint(leaf->key(), right_bound);
-    LeafKey right_key = new_key.value_or(right_bound);
+    if (!new_key.has_value()) {
+        assert(false && "split 前必須先完成 LeafKey relabel");
+        std::abort();
+    }
+    LeafKey right_key = *new_key;
 
     return {
         make_intrusive<FlowLeafNode>(leaf->key(), std::move(left_blocks)),
@@ -282,6 +434,37 @@ FlowSequence::FlowSequence(FlowSequenceConfig config,
                            IntrusivePtr<const FlowSequenceNode> root) noexcept
     : config_(config), root_(std::move(root)) {}
 
+FlowSequenceInsertResult::FlowSequenceInsertResult(
+    IntrusivePtr<const FlowSequenceNode> source_root,
+    FlowSequence sequence,
+    std::vector<FlowLocatorUpdate> locator_updates,
+    FlowSequenceEditDiagnostics diagnostics) noexcept
+    : source_root_(std::move(source_root)),
+      sequence_(std::move(sequence)),
+      locator_updates_(std::move(locator_updates)),
+      diagnostics_(diagnostics) {}
+
+const IntrusivePtr<const FlowSequenceNode>&
+FlowSequenceInsertResult::source_root() const noexcept {
+    return source_root_;
+}
+
+const FlowSequence& FlowSequenceInsertResult::sequence() const noexcept {
+    return sequence_;
+}
+
+FlowSequence FlowSequenceInsertResult::take_sequence() && noexcept {
+    return std::move(sequence_);
+}
+
+std::span<const FlowLocatorUpdate> FlowSequenceInsertResult::locator_updates() const noexcept {
+    return locator_updates_;
+}
+
+const FlowSequenceEditDiagnostics& FlowSequenceInsertResult::diagnostics() const noexcept {
+    return diagnostics_;
+}
+
 FlowSequence FlowSequence::empty(FlowSequenceConfig config) {
     return FlowSequence(config, nullptr);
 }
@@ -413,25 +596,68 @@ std::optional<std::size_t> FlowSequence::find_block_in_leaf(
 }
 
 FlowSequence FlowSequence::insert(std::size_t position, BlockId block_id) const {
+    return std::move(insert_with_updates(position, block_id)).take_sequence();
+}
+
+FlowSequenceInsertResult FlowSequence::insert_with_updates(
+    std::size_t position, BlockId block_id) const {
     assert(position <= block_count());
+
+    const auto source_root = root_;
+    std::vector<FlowLocatorUpdate> locator_updates;
+    FlowSequenceEditDiagnostics diagnostics;
 
     if (!root_) {
         auto initial_key = leaf_key_midpoint(leaf_key_min, leaf_key_max).value();
-        return FlowSequence(config_,
-                            make_intrusive<FlowLeafNode>(initial_key, std::vector<BlockId>{block_id}));
+        auto sequence = FlowSequence(
+            config_, make_intrusive<FlowLeafNode>(initial_key, std::vector<BlockId>{block_id}));
+        locator_updates.push_back(FlowLocatorUpdate{block_id, initial_key});
+        return FlowSequenceInsertResult(
+            source_root, std::move(sequence), std::move(locator_updates), diagnostics);
     }
 
-    auto result = insert_into(root_.get(), position, block_id, config_, leaf_key_max);
+    const auto target_position = (position == block_count()) ? position - 1 : position;
+    const auto target_before = find_leaf_info(root_.get(), target_position);
+    const auto right_position = target_before.start + target_before.count;
+    const auto right_bound = (right_position == block_count())
+        ? leaf_key_max
+        : find_leaf_info(root_.get(), right_position).key;
 
+    IntrusivePtr<const FlowSequenceNode> insertion_root = root_;
+    if (target_before.count >= config_.leaf_capacity &&
+        !leaf_key_midpoint(target_before.key, right_bound).has_value()) {
+        auto relabel = relabel_for_split(*this, target_position);
+        insertion_root = std::move(relabel.root);
+        locator_updates = std::move(relabel.locator_updates);
+        diagnostics = relabel.diagnostics;
+    }
+
+    const auto target_after_relabel = find_leaf_info(insertion_root.get(), target_position);
+    const auto next_position = target_after_relabel.start + target_after_relabel.count;
+    const auto insertion_right_bound = (next_position == block_count())
+        ? leaf_key_max
+        : find_leaf_info(insertion_root.get(), next_position).key;
+
+    auto result = insert_into(
+        insertion_root.get(), position, block_id, config_, insertion_right_bound);
+
+    FlowSequence sequence = FlowSequence::empty(config_);
     if (!result.right) {
-        return FlowSequence(config_, std::move(result.left));
+        sequence = FlowSequence(config_, std::move(result.left));
+    } else {
+        std::vector<ChildEntry> root_children;
+        root_children.push_back(make_child_entry(result.left));
+        root_children.push_back(make_child_entry(result.right));
+        sequence = FlowSequence(
+            config_, make_intrusive<FlowInternalNode>(std::move(root_children)));
     }
 
-    std::vector<ChildEntry> root_children;
-    root_children.push_back(make_child_entry(result.left));
-    root_children.push_back(make_child_entry(result.right));
-    return FlowSequence(config_,
-                        make_intrusive<FlowInternalNode>(std::move(root_children)));
+    const auto changed_end = target_before.start + target_before.count + 1;
+    for (std::size_t i = target_before.start; i < changed_end; ++i) {
+        set_locator_update(locator_updates, sequence.at(i), sequence.leaf_key_at(i));
+    }
+    return FlowSequenceInsertResult(
+        source_root, std::move(sequence), std::move(locator_updates), diagnostics);
 }
 
 FlowSequence FlowSequence::remove(std::size_t position) const {

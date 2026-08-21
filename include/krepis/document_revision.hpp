@@ -109,6 +109,10 @@ public:
     [[nodiscard]] DocumentRevision with_flow_root(ContainerId container,
                                                   FlowSequence sequence) const;
 
+    // D22：只套用 typed edit 明列的 locator 更新。來源 root 不符時整筆拒絕。
+    [[nodiscard]] Result<DocumentRevision> with_flow_insert(
+        ContainerId container, const FlowSequenceInsertResult& edit) const;
+
     // 不改內容的內部重排（compact／LeafKey 全域重建）：只遞增 storage_generation。
     [[nodiscard]] DocumentRevision with_storage_rebuild() const;
 

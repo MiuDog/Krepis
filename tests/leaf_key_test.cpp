@@ -109,6 +109,12 @@ void test_distribute_reports_insufficient_room() {
     expect(!ok, "區間過窄時回報失敗");
 }
 
+void test_distribute_preserves_one_midpoint_between_neighbors() {
+    std::vector<LeafKey> keys(8);
+    const bool ok = leaf_key_distribute(LeafKey{0, 0}, LeafKey{0, 9}, 8, keys.data());
+    expect(!ok, "只有相異 key 空間但無 midpoint 餘裕時要求擴張 window");
+}
+
 }  // namespace
 
 int main() {
@@ -120,5 +126,6 @@ int main() {
     test_distribute_is_strictly_increasing_and_inside();
     test_distribute_uses_full_128_bit_space();
     test_distribute_reports_insufficient_room();
+    test_distribute_preserves_one_midpoint_between_neighbors();
     return krepis_test::report("krepis.leaf_key");
 }

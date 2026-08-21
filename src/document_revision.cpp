@@ -139,6 +139,45 @@ DocumentRevision DocumentRevision::with_flow_root(ContainerId container,
                             std::move(new_locations), std::move(new_roots));
 }
 
+Result<DocumentRevision> DocumentRevision::with_flow_insert(
+    ContainerId container, const FlowSequenceInsertResult& edit) const {
+    const auto* current = flow_root(container);
+    const auto current_root = current ? current->root() : nullptr;
+    if (current_root.get() != edit.source_root().get()) {
+        return Error{ErrorCode::revision_conflict,
+                     "Flow insert 的來源 root 已不是目前 revision"};
+    }
+
+    auto new_directory = directory_;
+    auto new_locations = locations_;
+    for (const auto& update : edit.locator_updates()) {
+        auto allocated = new_directory->allocate(update.block.raw());
+        new_directory = std::move(allocated.directory);
+        new_locations = new_locations.set(
+            allocated.slot, make_flow_location(container, update.leaf_key));
+    }
+
+    auto new_roots = flow_roots_;
+    bool replaced = false;
+    for (auto& entry : new_roots) {
+        if (entry.first == container) {
+            entry.second = edit.sequence();
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced) {
+        new_roots.emplace_back(container, edit.sequence());
+    }
+
+    const SnapshotId next{
+        snapshot_id_.content_revision + 1,
+        snapshot_id_.storage_generation + (edit.diagnostics().global_rebuild ? 1u : 0u),
+    };
+    return DocumentRevision(next, std::move(new_directory), store_,
+                            std::move(new_locations), std::move(new_roots));
+}
+
 DocumentRevision DocumentRevision::with_storage_rebuild() const {
     // 只遞增 storage_generation：內容不變，但持有內部 handle 的工作必須失效（D18）。
     const SnapshotId rebuilt{snapshot_id_.content_revision, snapshot_id_.storage_generation + 1};

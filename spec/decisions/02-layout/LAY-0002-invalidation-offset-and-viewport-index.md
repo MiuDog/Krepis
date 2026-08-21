@@ -15,6 +15,8 @@
 - D12–D19 接受：2026-08-17
 - D20（分塊參數，由 benchmark 定案）接受：2026-08-17
 - D21（失效階段、停止條件與 reference cache key）接受：2026-08-21
+- D22（LeafKey 局部 relabel 與原子 locator 更新）接受：2026-08-21
+- D22 relabel 初始 window（benchmark 定案為 64）：2026-08-21
 
 ## 背景
 
@@ -22,8 +24,8 @@ P0 已證明若每次編輯都重寫全部後續 Block 的絕對 `y`，工作量
 累積高度索引從 viewport 找出可見 Block，並讓單一 Block 高度改變只更新聚合路徑。
 
 本檔已選定 Chunked B+ tree／Block rope 作為正式方向；D20 固定已量測的分塊參數，D21 固定完整
-失效方向、巢狀停止條件與 reference cache key。仍需量測的估計高度與 overscan 是可替換參數，
-不再阻擋本決策成立。
+失效方向、巢狀停止條件與 reference cache key，D22 固定 LeafKey 間距耗盡時的局部修復與發布
+契約。仍需量測的估計高度、overscan 與 relabel window 是可替換參數，不再阻擋本決策成立。
 
 ## D1：高度是 layout cache，不是 Block 內容
 
@@ -614,6 +616,7 @@ D17–D18 的生命週期與 revision 流程見
 leaf_capacity   = 64
 internal_fanout = 32
 merge_low_water = 24
+relabel_window  = 64  // D22 於 2026-08-21 補測定案
 ```
 
 量測的**主要產出不是這三個數字，而是「這三個數字不是瓶頸」**：全部候選設定都通過
@@ -736,11 +739,63 @@ Block 的 shaping invalidation；coordinator 在對應 leaf 內找到它，保�
 - 測試必須涵蓋階段合併、BlockId mismatch、舊 index 不變、重測轉回 measured、父層停止條件與
   reference key 每個欄位的失效效果。
 
+## D22：LeafKey relabel 由 bounded edit result 原子發布
+
+2026-08-21 已以預設參數重現：連續尾插 5,000 個 Block 會耗盡最後一個 leaf 到
+`leaf_key_max` 的中點，舊實作把新 leaf 設成右邊界，下一次 split 便以相同 key 觸發 assertion。
+修正不能只增加 key 寬度或調小測試，必須實作 D13 已定義的局部 relabel。
+
+插入先以 rank 找到目標 leaf；若目標 key 與右側邊界沒有中點，選取鄰近 leaf window，在 window
+外側兩個不變 key 之間重新均勻分配。空間不足時 window 依幾何級數擴張。每個被改 key 的 leaf
+只複製 root 到該 leaf 的 COW 路徑，不把整份 sequence 攤平成陣列。
+
+```mermaid
+flowchart TD
+  insert["Insert at rank"] --> target["Find target leaf and right bound"]
+  target --> gap{"Midpoint exists?"}
+  gap -->|yes| split["Split target leaf"]
+  gap -->|no| window["Collect bounded neighbor window"]
+  window --> space{"Outside interval has enough space?"}
+  space -->|no| expand["Grow window geometrically"]
+  expand --> space
+  space -->|yes| relabel["COW replace changed leaf keys"]
+  relabel --> split
+  split --> edit["Return sequence plus locator updates"]
+  edit --> publish["Publish FlowSequence and LocationIndex together"]
+```
+
+插入 API 的 typed edit result 必須包含：
+
+```text
+FlowSequenceInsertResult {
+    source_root
+    sequence
+    locator_updates[] { block_id, new_leaf_key }
+    diagnostics { relabeled_leaf_count, relabel_window, global_rebuild }
+}
+```
+
+- `source_root` 防止把由舊 sequence 算出的更新套到新 revision。`DocumentRevision` 發現 root 不匹配時
+  回傳 `revision_conflict`，不得套用部分 locator。
+- `locator_updates` 包含 split 後移到新 leaf 的 Block、插入 Block，以及 relabel window 內所有 key
+  改變的 Block；其他 LocationIndex page 不複製。
+- sequence root 與 LocationIndex page root 必須在同一個 `DocumentRevision` 建構完成後才發布。
+- 舊 snapshot 仍持有舊 root 與舊 locator，不得被 relabel 原地改寫。
+- 若 window 擴張到整棵 sequence，診斷標記 `global_rebuild`；與內容插入同時發生時 content revision
+  必須前進，storage generation 也前進，使舊內部 handle 明確失效。
+- 初始 window 已由 [`tasks/lay-0002-leaf-key-relabel-report.md`](../../../tasks/lay-0002-leaf-key-relabel-report.md)
+  定案為 **64 leaves**。在 50,000 次頭／尾／中間插入的混合 workload 中，它同時得到最低中位總
+  時間與最少 locator updates，且沒有擴張 window 或 global rebuild。
+- `leaf_key_distribute` 必須讓相鄰輸出與首尾邊界之間至少保留一個可用整數；只做到 key 相異仍會
+  讓最後一個 leaf 緊貼邊界，下一次 split 立即再次失敗。
+- 診斷數據必須可被測試與 benchmark 讀取，不能把重新編號隱藏成無法觀察的偶發延遲。
+
+具體例子：keys 為 `1000, 1001, 1002, 1003`，而目標 leaf 與右側 key 已相鄰時，可在外側不變
+邊界之間把這個 window 改成 `1000, 2000, 3000, 4000`。只有這四個 leaves 中的 Block locator
+跟著更新；stable BlockId、內容與邏輯順序都不變。
+
 ## 尚未決定
 
-- LeafKey 的 relabel window 初始大小與目標間距。
-  2026-08-21 的深樹定位測試準備過程中，預設設定連續尾插 5,000 個 Block 可重現
-  `leaf_key_midpoint` 的 `left < right` assertion；P1 大文件驗收前必須完成 relabel，不得只調小測試。
 - ObjectStore 的 Record page 容量、page-table fanout 與 compact 門檻。
 - 未量測 Block 的估計高度與第一次開啟超長文件的物化策略。
 - overscan 的單位、範圍與調整策略。

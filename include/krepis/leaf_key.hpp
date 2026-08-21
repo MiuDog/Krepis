@@ -54,7 +54,8 @@ inline constexpr LeafKey leaf_key_max{UINT64_MAX, UINT64_MAX};
 // 在 [left, right] 之間產生 count 個等距標籤，寫入 out。
 //
 // 供 relabel 使用。前置條件：`left < right`、`count >= 1`、`out` 至少可容納 count 個元素。
-// 回傳 false 表示區間容不下 count 個相異標籤，呼叫端必須擴張 window（LAY-0002 D13）。
+// 每兩個輸出與首尾邊界之間至少保留一個可供 midpoint insertion 的整數。
+// 回傳 false 表示區間雖可能容得下相異標籤，卻無法保留 split 間距；呼叫端必須擴張 window。
 //
 // 複雜度：O(count)。
 [[nodiscard]] bool leaf_key_distribute(const LeafKey& left, const LeafKey& right,
