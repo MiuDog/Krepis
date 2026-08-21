@@ -3,8 +3,8 @@
 ## 狀態
 
 **已由 P1 主計畫核准，進行中（2026-08-21）**。依賴／canonical UTF-8 與 2A Unicode analysis
-與 2B fallback／shaping 已完成；目前進入 2C line layout／cache benchmark。本計畫只細化主計畫
-第 2 階段，不擴張 In／Out，
+、2B fallback／shaping 與 2C line layout／cache benchmark 已完成。本計畫只細化主計畫第 2 階段，
+不擴張 In／Out，
 也沒有新增人工決策。
 
 ## 目標
@@ -167,11 +167,17 @@ font-set revision 重用候選／face coverage cache，revision 遞增後兩者�
 
 ### 4. Line layout 與 cache benchmark
 
-**狀態：進行中。**
+**狀態：✅ 完成（2026-08-21）。**
 
 - 先完成不帶 cache 的正確路徑，再加入 dependency-keyed LRU。
 - 量測 cache 候選容量與 TXT-5 同步路徑 p99；偏離建議值時記錄額外測試。
 - 驗收：P1 的 p99 ≤ 3 ms；composition overlay 改變 cache key、換行、extent 與 caret。
+
+完成證據：19/19 Debug 測試全綠；容量、命中率與延遲數據見
+[`p1-text-layout-cache-report.md`](p1-text-layout-cache-report.md)。預設容量定案為 256，Release
+p99 0.050 ms；composition／font-set revision 與 width 均有獨立 miss 測試。line range 逐行 bidi
+與 reshaping、強制 newline、空 paragraph、URL overflow、font extents baseline 與 grapheme caret
+均有機器驗收。
 
 ## 風險與回退
 

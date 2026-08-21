@@ -12,10 +12,12 @@ Notist 一旦能實際使用 Flow 文字與 IME，立即加入可丟棄的本機
 |---|---|---|
 | 0. 封存目前成果並恢復完整驗證 | ✅ 完成 | 三個基線提交；PR #1 的 MSVC、ASan、TSan、Linux text spikes 全綠 |
 | 1. `LeafKey` 局部 relabel | ✅ 完成 | `f545fee`；100k 三模式 gate、原子 locator、stale root、舊 snapshot 與 benchmark |
-| 2. 正式文字 layout | **進行中** | 子計畫：[`p1-text-layout-plan-20260821.md`](p1-text-layout-plan-20260821.md) |
-| 3–7 | 未開始 | 依本計畫順序執行 |
+| 2. 正式文字 layout | ✅ 完成 | 19/19 Debug；Release p99 0.050 ms；CI `32495083712` 四個 job 全綠 |
+| 3. Flow 編輯、IME、selection、undo | **下一步** | 依 `EDT-0001`、`TXT-0001` 與既有 D14／D15 composition 決策 |
+| 4–7 | 未開始 | 依本計畫順序執行 |
 
 遠端證據：[`CI run 32491214397`](https://github.com/MiuDog/Krepis/actions/runs/32491214397)、
+[`CI run 32495083712`](https://github.com/MiuDog/Krepis/actions/runs/32495083712)、
 [`PR #1`](https://github.com/MiuDog/Krepis/pull/1)。
 
 ## 目標與動機
