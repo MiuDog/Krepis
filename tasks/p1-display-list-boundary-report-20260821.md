@@ -2,7 +2,7 @@
 
 ## 狀態
 
-**格式、雙緩衝與最小 C ABI 完成；待文件/layout command 與 Dart FFI 垂直接線。**
+**格式、雙緩衝、layout encoder、glyph outline 與 C ABI 完成；待 Dart FFI 垂直接線。**
 
 ## 邊界資料流
 
@@ -27,6 +27,8 @@ flowchart LR
 - C header 由真正的 C compiler 建置；opaque handle 之外不暴露 C++ 型別。
 - 每個 engine 綁建立執行緒；C ABI catch-all 阻止例外跨界，`bad_alloc` 依 FND-0002 終止。
 - engine 有 outstanding lease 時 destroy 回 `invalid_state`；成功 release 後 acquire/release 計數一致。
+- Flutter 不重新 shaping；`DrawGlyphRun` 的 glyph ID 以 HarfBuzz outline side channel 轉成可快取 Path。
+- Paragraph layout 多 run append 為原子操作，後續 run 失敗會回滾先前 command。
 
 ## 具體例子
 
@@ -44,3 +46,5 @@ Flutter 持有 token 71（slot A），核心可在 slot B 產出 token 72。若 
   acquire=release=4,200。
 - Peak→steady：9,600,104 bytes 降至 128 bytes，縮容 1,075.04 µs；8 MiB／25%／每 slot 60 幀
   遲滯門檻正式定案。
+- 29/29 Debug tests；真實 Roboto glyph 輪廓、font revision cache invalidation、純 C path span／lease、
+  display 與 path double-release 拒絕均已驗證。

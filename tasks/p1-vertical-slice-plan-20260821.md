@@ -16,7 +16,7 @@ Notist 一旦能實際使用 Flow 文字與 IME，立即加入可丟棄的本機
 | 3. Flow 編輯、IME、selection、undo | **核心完成；待 C ABI 後接 Notist** | anchor、overlay、typed global undo、行首／中／行尾 split 與 merge 原子 undo 已完成 |
 | 4. Q1=A 暫時持久化 | **核心完成；待 Notist reopen smoke** | DOC-0003；round-trip、全截斷點、版本與原子替換已驗證 |
 | 5. Spatial 與雙向引用 | **核心完成；待 display list 視覺 smoke** | interval index、active-path DAG、原子 endpoint repair、dogfood v1.1 |
-| 6. Display list 與 C ABI | **邊界基礎完成；垂直接線中** | 6 opcodes、checked decoder、顯式 lease 雙緩衝、純 C test、p99 65.193 µs；peak→steady 縮容定案 |
+| 6. Display list 與 C ABI | **核心邊界完成；Dart 接線中** | 6 opcodes、checked decoder、lease 雙緩衝、layout encoder、glyph outline、純 C test、p99 65.193 µs |
 | 7. Notist 與最終閘門 | 未開始 | 待文件/layout command 接入 C ABI |
 
 遠端證據：[`CI run 32491214397`](https://github.com/MiuDog/Krepis/actions/runs/32491214397)、

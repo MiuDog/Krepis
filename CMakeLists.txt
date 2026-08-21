@@ -9,6 +9,14 @@ project(krepis
 find_package(Threads REQUIRED)
 include(cmake/KrepisTextDependencies.cmake)
 
+# Krepis 的 C ABI 以 shared library 交付；靜態文字依賴會被連入其中，必須具備 PIC。
+set_target_properties(
+    harfbuzz
+    krepis_text_unibreak
+    krepis_text_sheenbidi
+    PROPERTIES POSITION_INDEPENDENT_CODE ON
+)
+
 # 本專案為基座庫，可被其他專案 add_subdirectory 引入；只有作為頂層專案時才建置測試。
 if(PROJECT_IS_TOP_LEVEL)
     set(KREPIS_BUILD_TESTS_DEFAULT ON)
@@ -37,6 +45,7 @@ target_sources(krepis PRIVATE
     src/arena.cpp
     src/document_revision.cpp
     src/display_list.cpp
+	src/display_list_layout.cpp
     src/dogfood_file.cpp
     src/embed_record.cpp
     src/editing.cpp
@@ -45,6 +54,8 @@ target_sources(krepis PRIVATE
     src/object_store.cpp
     src/location_index.cpp
     src/flow_sequence.cpp
+	src/font_registry.cpp
+	src/glyph_outline.cpp
     src/id_generator.cpp
     src/ink_types.cpp
     src/leaf_key.cpp

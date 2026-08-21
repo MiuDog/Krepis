@@ -89,6 +89,33 @@ slot 連續 60 次 publish 都符合低使用時，核心才在它成為未借�
 `u32`），不傳 native font pointer。P1 C ABI 的 `KrepisGlyph` 固定 24 bytes，並以 C 與 C++ 編譯測試
 共同鎖定。
 
+## D6：Glyph ID 由核心輪廓 side channel 轉成 Flutter Path
+
+Flutter 3.44.4 的公開 `Canvas` 只有 `drawParagraph`，沒有直接繪製 glyph ID 的 API。外殼若把
+UTF-8 交回 `drawParagraph`，Skia 會再 shaping 一次，核心的 fallback、bidi、advance 與斷行就不再是
+唯一權威。因此字型 bytes 由外殼一次註冊到 `FontRegistry`，核心以 `hb_font_draw_glyph`
+產生 move、line、quadratic、cubic、close 五種輪廓 command。
+
+```mermaid
+flowchart LR
+  asset["Flutter font asset bytes"] --> registry["FontRegistry"]
+  registry --> shaping["TextShaper + ParagraphLayouter"]
+  shaping --> run["DrawGlyphRun: font/glyph/baseline"]
+  registry --> outline["GlyphOutlineCache"]
+  run --> painter["Flutter CustomPainter"]
+  outline -->|"fontId + glyphId + size"| painter
+  painter --> path["cached ui.Path; Y axis flipped at baseline"]
+```
+
+Outline cache key 是 `(font_set_revision, font_id, glyph_id, font_size_26_6)`。C ABI 回傳固定寬度
+`KrepisGlyphPathCommand` span 與 `uint64` lease handle；外殼轉成 `Path` 後立即 release。字型 revision
+改變時核心清除舊 outline。HarfBuzz 字型座標 Y 軸向上，Flutter Y 軸向下，外殼只能在
+glyph baseline 套用 Y 軸反轉；這是繪圖座標轉換，不是 layout 規則。
+
+`append_paragraph_layout` 以 line baseline 與 visual run advances 序列化 `ParagraphLayout`。它以
+builder checkpoint 保護整個 paragraph；任一後續 run 失敗時回滾前面已寫入的 command，禁止
+發布「合法但少字」的部分 frame。
+
 Release benchmark（WSL，2026-08-21）以 4,000 幀、每幀 200 個 20-glyph runs，加背景與 clip，
 同時計入 encode、publish 自驗、consumer 再驗與 lease：
 
@@ -126,6 +153,10 @@ command 完全合法，也不能先畫第一個再報錯，必須保留上一幀
 流式頁。核心不在第一個小 frame 立即縮容；只有當同一 slot 連續 60 次都低於 25% 使用率，
 才在它未被 lease 的時候釋放尖峰容量。
 
+例如 `DrawGlyphRun` 要畫 font 7 的 glyph 37，16 px 字級。Flutter 第一次用
+`(7, 37, 1024)` 向核心取得 outline，建立一個 Y 軸反轉的 `Path`；後續幀只依 glyph
+offset 與 advance 平移同一 `Path`。它不會再拿原文字呼叫 `drawParagraph`。
+
 ## Invariant 與拒絕行為
 
 - Publish 前必須完整 encode 與驗證，front buffer 永遠是一個完整有效 frame。
@@ -140,3 +171,5 @@ command 完全合法，也不能先畫第一個再報錯，必須保留上一幀
 - 雙緩衝使用約兩倍峰值 display-list 記憶體，避免每幀配置與讀寫競態。
 - Property test 必須覆蓋 round-trip、截斷每一 byte、錯誤 size、未知 opcode／flags、版本矩陣與
   frame-token lifetime。
+- C ABI lease 使用數值 handle 而非 heap pointer；重複 release 用 map lookup 拒絕，不解參考已釋放
+  pointer。

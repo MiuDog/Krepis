@@ -48,6 +48,9 @@ add_test(NAME krepis.display_list COMMAND krepis_display_list_test)
 add_executable(krepis_c_abi_test c_abi_test.c)
 target_link_libraries(krepis_c_abi_test PRIVATE krepis_c)
 target_include_directories(krepis_c_abi_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(krepis_c_abi_test PRIVATE
+    KREPIS_TEST_C_ABI_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+)
 if(MSVC)
     target_compile_options(krepis_c_abi_test PRIVATE /W4)
 else()
@@ -86,6 +89,18 @@ target_compile_definitions(krepis_text_layout_test PRIVATE
     KREPIS_TEST_LATIN_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
 )
 add_test(NAME krepis.text_layout COMMAND krepis_text_layout_test)
+
+krepis_add_test(krepis_glyph_outline_test glyph_outline_test.cpp)
+target_compile_definitions(krepis_glyph_outline_test PRIVATE
+    KREPIS_TEST_OUTLINE_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+)
+add_test(NAME krepis.glyph_outline COMMAND krepis_glyph_outline_test)
+
+krepis_add_test(krepis_display_list_layout_test display_list_layout_test.cpp)
+target_compile_definitions(krepis_display_list_layout_test PRIVATE
+    KREPIS_TEST_DISPLAY_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+)
+add_test(NAME krepis.display_list_layout COMMAND krepis_display_list_layout_test)
 
 krepis_add_test(krepis_transaction_test transaction_test.cpp)
 add_test(NAME krepis.transaction COMMAND krepis_transaction_test)

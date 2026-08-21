@@ -36,7 +36,8 @@ enum {
 };
 
 typedef struct KrepisDisplayEngineOpaque* KrepisDisplayEngine;
-typedef struct KrepisDisplayLeaseOpaque* KrepisDisplayLease;
+typedef uint64_t KrepisDisplayLease;
+typedef uint64_t KrepisGlyphPathLease;
 
 typedef struct KrepisGlyph {
 	uint32_t glyph_id;
@@ -66,6 +67,28 @@ typedef struct KrepisDisplayStats {
 	uint64_t outstanding_leases;
 } KrepisDisplayStats;
 
+enum {
+	KREPIS_GLYPH_PATH_MOVE_TO = 1,
+	KREPIS_GLYPH_PATH_LINE_TO = 2,
+	KREPIS_GLYPH_PATH_QUADRATIC_TO = 3,
+	KREPIS_GLYPH_PATH_CUBIC_TO = 4,
+	KREPIS_GLYPH_PATH_CLOSE = 5,
+};
+
+typedef struct KrepisGlyphPathCommand {
+	uint32_t opcode;
+	float values[6];
+} KrepisGlyphPathCommand;
+
+typedef struct KrepisGlyphPathSpan {
+	uint32_t struct_size;
+	uint16_t abi_major;
+	uint16_t abi_minor;
+	const KrepisGlyphPathCommand* commands;
+	uint64_t command_count;
+	KrepisGlyphPathLease lease;
+} KrepisGlyphPathSpan;
+
 /*
  * 執行緒契約：下列所有 engine／lease 入口只能由建立 engine 的 UI 執行緒呼叫。
  * 記憶體契約：acquire 回傳的 data 在對應 release 成功前有效且唯讀；不得由外殼釋放。
@@ -77,6 +100,24 @@ KREPIS_C_API KrepisStatus krepis_display_engine_create(
 );
 
 KREPIS_C_API KrepisStatus krepis_display_engine_destroy(KrepisDisplayEngine engine);
+KREPIS_C_API KrepisStatus krepis_display_register_font(
+	KrepisDisplayEngine engine,
+	uint64_t font_id,
+	const uint8_t* bytes,
+	uint64_t byte_size,
+	uint32_t face_index
+);
+KREPIS_C_API KrepisStatus krepis_display_acquire_glyph_path(
+	KrepisDisplayEngine engine,
+	uint64_t font_id,
+	uint32_t glyph_id,
+	int32_t font_size_26_6,
+	KrepisGlyphPathSpan* out_span
+);
+KREPIS_C_API KrepisStatus krepis_display_release_glyph_path(
+	KrepisDisplayEngine engine,
+	KrepisGlyphPathLease lease
+);
 KREPIS_C_API KrepisStatus krepis_display_builder_reset(KrepisDisplayEngine engine);
 
 KREPIS_C_API KrepisStatus krepis_display_add_rect(

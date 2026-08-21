@@ -14,6 +14,18 @@
 
 namespace krepis {
 
+class DisplayListBuilder;
+struct ParagraphLayout;
+
+[[nodiscard]] Result<void> append_paragraph_layout(
+	DisplayListBuilder& builder,
+	const ParagraphLayout& layout,
+	std::int32_t origin_x_26_6,
+	std::int32_t origin_y_26_6,
+	std::int32_t font_size_26_6,
+	std::uint32_t color_rgba
+);
+
 enum class DisplayOpcode : std::uint16_t {
 	draw_rect = 1,
 	draw_glyph_run = 2,
@@ -60,6 +72,14 @@ public:
 
 private:
 	friend class DisplayListPublisher;
+	friend Result<void> append_paragraph_layout(
+		DisplayListBuilder& builder,
+		const ParagraphLayout& layout,
+		std::int32_t origin_x_26_6,
+		std::int32_t origin_y_26_6,
+		std::int32_t font_size_26_6,
+		std::uint32_t color_rgba
+	);
 
 	[[nodiscard]] Result<std::size_t> append_command(
 		DisplayOpcode opcode,

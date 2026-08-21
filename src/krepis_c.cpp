@@ -1,6 +1,8 @@
 #include "krepis/krepis_c.h"
 
 #include "krepis/display_list.hpp"
+#include "krepis/font_registry.hpp"
+#include "krepis/glyph_outline.hpp"
 
 #include <array>
 #include <cstddef>
@@ -9,22 +11,27 @@
 #include <new>
 #include <span>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 struct KrepisDisplayEngineOpaque {
+	KrepisDisplayEngineOpaque() : outlines(fonts) {}
+
 	std::thread::id owner_thread = std::this_thread::get_id();
 	krepis::DisplayListPublisher publisher;
+	krepis::FontRegistry fonts;
+	krepis::GlyphOutlineCache outlines;
 	std::vector<krepis::Glyph> glyph_scratch;
-};
-
-struct KrepisDisplayLeaseOpaque {
-	KrepisDisplayEngine owner = nullptr;
-	std::uint64_t lease_id = 0;
+	std::uint64_t next_lease_handle = 1;
+	std::unordered_map<KrepisDisplayLease, std::uint64_t> display_leases;
+	std::unordered_map<KrepisGlyphPathLease, krepis::SharedGlyphPath> path_leases;
 };
 
 static_assert(sizeof(KrepisGlyph) == 24);
 static_assert(offsetof(KrepisGlyph, glyph_id) == 0);
 static_assert(offsetof(KrepisGlyph, cluster_byte_offset) == 20);
+static_assert(sizeof(KrepisGlyphPathCommand) == sizeof(krepis::GlyphPathCommand));
+static_assert(offsetof(KrepisGlyphPathCommand, values) == 4);
 
 namespace {
 
@@ -38,6 +45,12 @@ KrepisStatus status(krepis::Error error) noexcept {
 
 bool correct_thread(KrepisDisplayEngine engine) noexcept {
 	return engine != nullptr && engine->owner_thread == std::this_thread::get_id();
+}
+
+std::uint64_t next_lease_handle(KrepisDisplayEngine engine) noexcept {
+	const auto handle = engine->next_lease_handle++;
+	if (handle == 0 || engine->next_lease_handle == 0) std::terminate();
+	return handle;
 }
 
 template <typename Function>
@@ -73,13 +86,82 @@ KrepisStatus krepis_display_engine_create(
 
 KrepisStatus krepis_display_engine_destroy(KrepisDisplayEngine engine) {
 	if (!correct_thread(engine)) return KREPIS_STATUS_INVALID_ARGUMENT;
-	if (engine->publisher.stats().outstanding_leases != 0) {
+	if (!engine->display_leases.empty() || !engine->path_leases.empty() ||
+	    engine->publisher.stats().outstanding_leases != 0) {
 		return KREPIS_STATUS_INVALID_STATE;
 	}
 	return guard([&]() -> KrepisStatus {
 		delete engine;
 		return KREPIS_STATUS_OK;
 	});
+}
+
+KrepisStatus krepis_display_register_font(
+	KrepisDisplayEngine engine,
+	std::uint64_t font_id,
+	const std::uint8_t* bytes,
+	std::uint64_t byte_size,
+	std::uint32_t face_index
+) {
+	if (!correct_thread(engine) || bytes == nullptr || byte_size == 0 ||
+	    byte_size > std::numeric_limits<std::size_t>::max()) {
+		return KREPIS_STATUS_INVALID_ARGUMENT;
+	}
+	return guard([&]() -> KrepisStatus {
+		auto result = engine->fonts.register_font(
+			font_id,
+			std::span<const std::byte>(
+				reinterpret_cast<const std::byte*>(bytes),
+				static_cast<std::size_t>(byte_size)
+			),
+			face_index
+		);
+		return result.is_ok() ? ok_status : status(result.error());
+	});
+}
+
+KrepisStatus krepis_display_acquire_glyph_path(
+	KrepisDisplayEngine engine,
+	std::uint64_t font_id,
+	std::uint32_t glyph_id,
+	std::int32_t font_size_26_6,
+	KrepisGlyphPathSpan* out_span
+) {
+	if (!correct_thread(engine) || out_span == nullptr ||
+	    out_span->struct_size != sizeof(KrepisGlyphPathSpan)) {
+		return KREPIS_STATUS_INVALID_ARGUMENT;
+	}
+	out_span->abi_major = 0;
+	out_span->abi_minor = 0;
+	out_span->commands = nullptr;
+	out_span->command_count = 0;
+	out_span->lease = 0;
+	return guard([&]() -> KrepisStatus {
+		auto result = engine->outlines.outline(font_id, glyph_id, font_size_26_6);
+		if (!result.is_ok()) return status(result.error());
+		const auto handle = next_lease_handle(engine);
+		auto inserted = engine->path_leases.emplace(handle, result.value());
+		if (!inserted.second) std::terminate();
+		out_span->abi_major = abi_major;
+		out_span->abi_minor = abi_minor;
+		out_span->commands = reinterpret_cast<const KrepisGlyphPathCommand*>(
+			inserted.first->second->data()
+		);
+		out_span->command_count = inserted.first->second->size();
+		out_span->lease = handle;
+		return KREPIS_STATUS_OK;
+	});
+}
+
+KrepisStatus krepis_display_release_glyph_path(
+	KrepisDisplayEngine engine,
+	KrepisGlyphPathLease lease
+) {
+	if (!correct_thread(engine) || lease == 0) return KREPIS_STATUS_INVALID_ARGUMENT;
+	const auto found = engine->path_leases.find(lease);
+	if (found == engine->path_leases.end()) return KREPIS_STATUS_INVALID_ARGUMENT;
+	engine->path_leases.erase(found);
+	return KREPIS_STATUS_OK;
 }
 
 KrepisStatus krepis_display_builder_reset(KrepisDisplayEngine engine) {
@@ -233,11 +315,13 @@ KrepisStatus krepis_display_acquire(
 	out_span->data = nullptr;
 	out_span->byte_size = 0;
 	out_span->frame_token = 0;
-	out_span->lease = nullptr;
+	out_span->lease = 0;
 	return guard([&]() -> KrepisStatus {
 		auto result = engine->publisher.acquire_front();
 		if (!result.is_ok()) return status(result.error());
-		auto* lease = new KrepisDisplayLeaseOpaque{engine, result.value().lease_id};
+		const auto lease = next_lease_handle(engine);
+		auto inserted = engine->display_leases.emplace(lease, result.value().lease_id);
+		if (!inserted.second) std::terminate();
 		out_span->abi_major = abi_major;
 		out_span->abi_minor = abi_minor;
 		out_span->data = reinterpret_cast<const std::uint8_t*>(result.value().data);
@@ -252,13 +336,13 @@ KrepisStatus krepis_display_release(
 	KrepisDisplayEngine engine,
 	KrepisDisplayLease lease
 ) {
-	if (!correct_thread(engine) || lease == nullptr || lease->owner != engine) {
-		return KREPIS_STATUS_INVALID_ARGUMENT;
-	}
+	if (!correct_thread(engine) || lease == 0) return KREPIS_STATUS_INVALID_ARGUMENT;
+	const auto found = engine->display_leases.find(lease);
+	if (found == engine->display_leases.end()) return KREPIS_STATUS_INVALID_ARGUMENT;
 	return guard([&]() -> KrepisStatus {
-		auto result = engine->publisher.release(lease->lease_id);
+		auto result = engine->publisher.release(found->second);
 		if (!result.is_ok()) return status(result.error());
-		delete lease;
+		engine->display_leases.erase(found);
 		return KREPIS_STATUS_OK;
 	});
 }
