@@ -198,16 +198,19 @@ Result<ParagraphLayout> ParagraphLayouter::layout(
 		provisional.value().analysis,
 		provisional.value().glyph_runs
 	);
-	const auto ranges = choose_lines(
+	auto ranges = choose_lines(
 		provisional.value().analysis,
 		provisional_advances,
 		utf8.size(),
 		width_26_6
 	);
+	const auto break_points = approved_breaks(utf8.size(), provisional.value().analysis);
 
 	ParagraphLayout result{source_revision, width_26_6, 0, {}, {}, {}};
 	std::int64_t block_y = 0;
-	for (const auto& [begin, end] : ranges) {
+	for (std::size_t range_index = 0; range_index < ranges.size();) {
+		const auto begin = ranges[range_index].first;
+		const auto end = ranges[range_index].second;
 		auto visible_end = end;
 		while (visible_end > begin &&
 		       (utf8[visible_end - 1] == '\n' || utf8[visible_end - 1] == '\r')) {
@@ -228,6 +231,7 @@ Result<ParagraphLayout> ParagraphLayouter::layout(
 			block_y += line_height_26_6;
 			result.caret_stops.push_back(CaretStop{begin, line_index, 0});
 			if (end != begin) result.caret_stops.push_back(CaretStop{end, line_index, 0});
+			++range_index;
 			continue;
 		}
 		auto shaped_line = shaper_.shape_line(
@@ -250,6 +254,33 @@ Result<ParagraphLayout> ParagraphLayouter::layout(
 			begin,
 			visible_end
 		);
+		if (final_width > width_26_6) {
+			auto split = begin;
+			for (const auto& point : break_points) {
+				if (point.byte_offset > begin && point.byte_offset < visible_end) {
+					split = point.byte_offset;
+				}
+			}
+			if (split != begin) {
+				const auto end_is_mandatory = std::any_of(
+					break_points.begin(),
+					break_points.end(),
+					[end](const auto& point) {
+						return point.byte_offset == end && point.mandatory;
+					}
+				);
+				ranges[range_index].second = split;
+				if (!end_is_mandatory && range_index + 1 < ranges.size()) {
+					ranges[range_index + 1].first = split;
+				} else {
+					ranges.insert(
+						ranges.begin() + static_cast<std::ptrdiff_t>(range_index + 1),
+						{split, end}
+					);
+				}
+				continue;
+			}
+		}
 		const auto run_offset = result.glyph_runs.size();
 		std::int32_t ascender = 0;
 		std::int32_t descender = 0;
@@ -289,6 +320,7 @@ Result<ParagraphLayout> ParagraphLayouter::layout(
 				narrow_advance(final_width),
 			});
 		}
+		++range_index;
 	}
 	result.total_height_26_6 = narrow_advance(block_y);
 	return result;
