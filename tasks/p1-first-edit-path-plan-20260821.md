@@ -198,8 +198,10 @@ EDT-5、ATH-1、BND-5 仍依法保持未決，不以本計畫猜測數值。
 - 已完成 `ParagraphRecord`、嚴格 UTF-8 驗證、單層原子 Transaction、批次 record COW 更新、
   typed layout invalidation、跨 Container 過濾與 measured／estimated 狀態轉換。
 - WSL／GCC Debug：15/15 通過；WSL／GCC Release：15/15 通過。
-- Windows MSVC `Verify` 未完成：目前 Codex 桌面程序同時注入 `Path`／`PATH`，MSBuild 在啟動
-  `CL.exe` 前回 `MSB6001`。依兩次重試上限停止；需在乾淨 Developer PowerShell 重新執行。
+- Codex 桌面程序內的 Windows MSVC `Verify` 仍受 `Path`／`PATH` 注入衝突阻擋，但同一提交已由
+  GitHub Windows runner 的 MSVC Release configure／build／CTest 通過；跨工具鏈另有 Clang ASan、
+  Clang TSan 與 Linux text spikes 通過。證據見
+  [`CI run 32491214397`](https://github.com/MiuDog/Krepis/actions/runs/32491214397)。
 - 本次 Markdown 目標 read-back 通過；環境沒有 Mermaid CLI，因此只驗證 fence、節點 ID、連結與
   原始碼語法，未做視覺渲染。
 - 額外發現：預設 FlowSequence 連續尾插 5,000 個 Block 可重現 LeafKey 間距耗盡 assertion；已寫回

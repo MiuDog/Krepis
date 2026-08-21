@@ -6,6 +6,18 @@
 Notist 一旦能實際使用 Flow 文字與 IME，立即加入可丟棄的本機持久化，再繼續完成 Spatial 與
 其餘 P1 工作。
 
+## 進度紀錄
+
+| 階段 | 狀態 | 證據 |
+|---|---|---|
+| 0. 封存目前成果並恢復完整驗證 | ✅ 完成 | 三個基線提交；PR #1 的 MSVC、ASan、TSan、Linux text spikes 全綠 |
+| 1. `LeafKey` 局部 relabel | ✅ 完成 | `f545fee`；100k 三模式 gate、原子 locator、stale root、舊 snapshot 與 benchmark |
+| 2. 正式文字 layout | **下一步** | 待實作 grapheme、bidi、fallback、shaping、line breaking 與 cache |
+| 3–7 | 未開始 | 依本計畫順序執行 |
+
+遠端證據：[`CI run 32491214397`](https://github.com/MiuDog/Krepis/actions/runs/32491214397)、
+[`PR #1`](https://github.com/MiuDog/Krepis/pull/1)。
+
 ## 目標與動機
 
 完成 Windows 上第一條可每天使用、可量測且能證明架構成立的垂直路徑：同一份不可變文件資料
@@ -66,6 +78,9 @@ flowchart TD
 完成證據：GitHub workflow 結果、Debug／Release 測試尾行與 `git diff --check`。
 
 ### 1. `LeafKey` 局部 relabel
+
+**狀態：完成（2026-08-21）。** 初始 window 經實測定案為 64；完整數據見
+[`lay-0002-leaf-key-relabel-report.md`](lay-0002-leaf-key-relabel-report.md)。
 
 - 先加入能重現預設設定連續頭插、尾插與中間插入的失敗測試。
 - midpoint 不存在時選取鄰近 leaf window，視可用 128-bit 區間幾何擴張 window，均勻重編號。

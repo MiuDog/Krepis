@@ -68,7 +68,9 @@ Flutter／Notist 垂直整合；因此 P1 尚未關閉。
 **P1 blocker 已修正（2026-08-21）**：預設 FlowSequence 連續尾插 5,000 個 Block 時耗盡相鄰
 LeafKey 間距的 assertion 已由 `LAY-0002` D22 局部 relabel 修正。初始 window 經 benchmark 定案為
 64；100,000 次頭插、尾插與中間插入、舊 snapshot、typed locator update、stale edit 拒絕與
-global storage generation 路徑均有機器測試。跨工具鏈 CI 證據仍需包含此提交後的結果。
+global storage generation 路徑均有機器測試。PR #1 的 MSVC、Clang ASan、Clang TSan 與 Linux
+text spikes 已於 [`CI run 32491214397`](https://github.com/MiuDog/Krepis/actions/runs/32491214397)
+全數通過；此 blocker 已關閉，下一步為正式文字 shaping／line breaking。
 
 #### 驗收條件（全部可機器判定）
 
