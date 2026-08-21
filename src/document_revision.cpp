@@ -3,6 +3,7 @@
 #include "krepis/embed_record.hpp"
 
 #include <cassert>
+#include <unordered_set>
 #include <utility>
 
 namespace krepis {
@@ -136,6 +137,101 @@ Result<DocumentRevision> DocumentRevision::with_updated_records(
 		flow_roots_,
 		spatial_roots_,
 		std::move(references)
+	);
+}
+
+Result<DocumentRevision> DocumentRevision::with_atomic_flow_edit(
+	ContainerId container,
+	FlowSequence sequence,
+	std::span<const FlowRecordMutation> mutations
+) const {
+	if (flow_root(container) == nullptr) {
+		return Error{ErrorCode::not_found, "Flow edit 的 Container 不存在"};
+	}
+
+	// 步驟 1：驗證 mutation 不重複，且 tombstone 只指向已存在物件。
+	std::unordered_set<ObjectId> mutation_ids;
+	mutation_ids.reserve(mutations.size());
+	for (const auto& mutation : mutations) {
+		if (!mutation_ids.insert(mutation.block.raw()).second ||
+		    (!mutation.tombstone && mutation.record == nullptr)) {
+			return Error{ErrorCode::invalid_argument, "Flow edit mutation 重複或 record 為 null"};
+		}
+		if (mutation.tombstone && !resolve(mutation.block).is_valid()) {
+			return Error{ErrorCode::not_found, "Flow edit tombstone 目標不存在"};
+		}
+	}
+
+	// 步驟 2：在未發布的 store 中一次建立全部 record 變更。
+	auto new_directory = directory_;
+	auto new_store = store_;
+	auto new_references = references_;
+	for (const auto& mutation : mutations) {
+		auto allocated = new_directory->allocate(mutation.block.raw());
+		new_directory = std::move(allocated.directory);
+		if (const auto* prior = dynamic_cast<const EmbedRecord*>(new_store.get(allocated.slot).get())) {
+			new_references = new_references->with_removed(
+				prior->source_container(),
+				mutation.block
+			);
+		}
+		if (mutation.tombstone) {
+			new_store = new_store.with_tombstone(allocated.slot);
+			continue;
+		}
+		if (const auto* embed = dynamic_cast<const EmbedRecord*>(mutation.record.get())) {
+			new_references = new_references->with_added(embed->source_container(), mutation.block);
+		}
+		new_store = new_store.with_record(allocated.slot, mutation.record);
+	}
+
+	// 步驟 3：驗證新順序的每個 Block 都有可見 record，且沒有偷走其他 owner 的內容。
+	for (std::size_t position = 0; position < sequence.block_count(); ++position) {
+		const auto block = sequence.at(position);
+		const auto slot = new_directory->resolve(block.raw());
+		if (!slot.is_valid() || !new_store.contains(slot)) {
+			return Error{ErrorCode::invalid_state, "Flow edit 順序指向無可見 record"};
+		}
+		const auto prior_location = locations_.lookup(slot);
+		if (!prior_location.is_empty() && prior_location.owner != container) {
+			return Error{ErrorCode::invalid_state, "Flow edit 不得改變其他 Container 的 ownership"};
+		}
+	}
+
+	// 步驟 4：依新 FlowSequence 重建該 owner 的 locator，並與 store 同時發布。
+	auto new_locations = locations_;
+	const auto* prior_root = flow_root(container);
+	for (std::size_t position = 0; position < prior_root->block_count(); ++position) {
+		const auto slot = new_directory->resolve(prior_root->at(position).raw());
+		const auto location = new_locations.lookup(slot);
+		if (location.is_flow() && location.owner == container) {
+			new_locations = new_locations.clear(slot);
+		}
+	}
+	for (std::size_t position = 0; position < sequence.block_count(); ++position) {
+		const auto block = sequence.at(position);
+		const auto slot = new_directory->resolve(block.raw());
+		new_locations = new_locations.set(
+			slot,
+			make_flow_location(container, sequence.leaf_key_at(position))
+		);
+	}
+
+	auto roots = flow_roots_;
+	for (auto& entry : roots) {
+		if (entry.first == container) {
+			entry.second = std::move(sequence);
+			break;
+		}
+	}
+	return DocumentRevision(
+		next_content_revision(),
+		std::move(new_directory),
+		std::move(new_store),
+		std::move(new_locations),
+		std::move(roots),
+		spatial_roots_,
+		std::move(new_references)
 	);
 }
 

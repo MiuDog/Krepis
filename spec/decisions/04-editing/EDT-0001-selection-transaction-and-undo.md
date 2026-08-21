@@ -48,8 +48,23 @@ SpatialSelection 是 stable node ID 集合，不假造 caret 或連續區間。I
 4. 執行 `DocumentRevision::validate()` 與 transaction-specific invariant。
 5. 只產生一個 content revision 並回傳 `CommitResult`。
 
-任一步失敗只回傳 `Error`；沒有可取得的半成品 revision，也不由 client 修補。第一條實作路徑只含
-`ReplaceParagraphText`，之後新增 command 不改變原子邊界。
+任一步失敗只回傳 `Error`；沒有可取得的半成品 revision，也不由 client 修補。P1 已實作
+`ReplaceParagraphText`、`SplitParagraph` 與 `MergeParagraphs`。結構 command 會透過
+`with_atomic_flow_edit` 把 record、FlowSequence 與 LocationIndex 只發布成一個 revision。P1 的單筆
+Transaction 不混用文字與結構 command；未來需跨 Block 剪貼時再以 ordered typed-command
+builder 擴展，不得用多次發布假裝原子性。
+
+```mermaid
+flowchart LR
+  event["Enter / Backspace"] --> tx["Transaction typed command"]
+  tx --> validate["owner + adjacency + grapheme validation"]
+  validate --> records["ParagraphRecord mutations"]
+  validate --> sequence["new FlowSequence"]
+  records --> atomic["with_atomic_flow_edit"]
+  sequence --> atomic
+  atomic --> publish["one DocumentRevision"]
+  publish --> undo["one global UndoManager entry"]
+```
 
 ### 複雜度
 
@@ -85,12 +100,22 @@ Transaction 同時把 Paragraph A 改成 `AB頁`，並移動 Spatial node B：�
 已被刪除，A 不能獨自變成 `AB頁`；commit 回傳錯誤且 base revision 仍是唯一可見狀態。若都成功，
 content revision 從 41 直接變 42，不是 43，undo 也只有一項。
 
+Paragraph `AB` 的 ID 是 `Block-10`：
+
+- 在行首 Enter：順序變成 `[Block-11(""), Block-10("AB")]`，原 ID 與文字不變。
+- 在 A／B 之間 Enter：順序變成 `[Block-10("A"), Block-11("B")]`。
+- 在行尾 Enter：順序變成 `[Block-10("AB"), Block-11("")]`，原 ID 與文字不變。
+- 將 `Block-10("A")` 與後方 `Block-11("B")` 合併：結果是 `Block-10("AB")`，`Block-11`
+  tombstone。Undo 會在原位置復活同一 `Block-11`，不產生新 ID。
+
 ## Invariant 與拒絕行為
 
 - Stale base、重複目標、找不到 stable ID、record kind 不符或 revision validation 失敗皆 fail closed。
 - Command 不得保存 borrowed node pointer；跨 snapshot 資料只保存 stable ID 與值。
 - Client 不得自行發布 `DocumentRevision`、拆分 Transaction 或合併 undo entry。
 - 成功 CommitResult 的 invalidation set 必須由實際 command 產生，layout 不從 diff 猜測。
+- Split／merge 的 undo 必須同時失效 primary 與 secondary Block；只重排順序不足以重建 layout。
+- 同一 Transaction 的第二個結構 command 必須拒絕，不得靜默覆寫先前 command。
 
 ## 後果與驗證
 

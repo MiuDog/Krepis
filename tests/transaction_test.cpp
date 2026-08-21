@@ -9,6 +9,7 @@
 #include <string>
 
 using krepis::BlockId;
+using krepis::ContainerId;
 using krepis::DocumentRevision;
 using krepis::ErrorCode;
 using krepis::InvalidationStage;
@@ -30,6 +31,10 @@ public:
 
 BlockId make_block(std::uint64_t value) {
 	return BlockId{ObjectId{0, value}};
+}
+
+ContainerId make_container(std::uint64_t value) {
+	return ContainerId{ObjectId{1, value}};
 }
 
 DocumentRevision with_paragraph(DocumentRevision revision, BlockId block, const char* text) {
@@ -171,6 +176,89 @@ void test_range_replace_uses_grapheme_boundaries_and_reports_effect() {
 	expect(!out_of_range.commit(base).is_ok(), "超出 grapheme 數的 range fail closed");
 }
 
+void test_enter_split_preserves_edge_block_and_uses_one_revision() {
+	const auto container = make_container(1);
+	for (std::size_t boundary = 0; boundary <= 2; ++boundary) {
+		auto base = with_paragraph(DocumentRevision::initial(), make_block(1), "AB");
+		base = base.with_flow_root(
+			container,
+			krepis::FlowSequence::empty().insert(0, make_block(1))
+		);
+		const auto base_revision = base.snapshot_id().content_revision;
+		Transaction transaction(base_revision);
+		transaction.split_paragraph(container, make_block(1), boundary, make_block(2));
+		auto result = transaction.commit(base);
+		expect(result.is_ok(), "Enter split 在行首、中間、行尾都可提交");
+		if (!result.is_ok()) continue;
+		const auto& revision = result.value().revision;
+		expect(revision.snapshot_id().content_revision == base_revision + 1,
+		       "split 的 record、順序與 locator 只發布一個 revision");
+		const auto* sequence = revision.flow_root(container);
+		expect(sequence != nullptr && sequence->block_count() == 2,
+		       "split 後 Flow 恰有兩個 Block");
+		if (sequence == nullptr) continue;
+		const auto* primary = paragraph_for(revision, make_block(1));
+		const auto* secondary = paragraph_for(revision, make_block(2));
+		if (boundary == 0) {
+			expect(sequence->at(0) == make_block(2) && sequence->at(1) == make_block(1),
+			       "行首 Enter 在原 Block 前方加新 ID");
+			expect(primary != nullptr && primary->utf8() == "AB" &&
+			           secondary != nullptr && secondary->utf8().empty(),
+			       "行首 Enter 不改原 Block 文字");
+		} else {
+			expect(sequence->at(0) == make_block(1) && sequence->at(1) == make_block(2),
+			       "中間或行尾 Enter 在原 Block 後方加新 ID");
+			expect(primary != nullptr && primary->utf8() == (boundary == 1 ? "A" : "AB") &&
+			           secondary != nullptr && secondary->utf8() == (boundary == 1 ? "B" : ""),
+			       "中間 Enter 分割文字，行尾 Enter 不改原 Block");
+		}
+		expect(result.value().flow_structure_records.size() == 1,
+		       "split 產生一筆 typed structure undo record");
+	}
+}
+
+void test_merge_adjacent_paragraphs_keeps_first_id() {
+	const auto container = make_container(2);
+	auto base = with_paragraph(DocumentRevision::initial(), make_block(1), "AB");
+	base = with_paragraph(std::move(base), make_block(2), "CD");
+	base = base.with_flow_root(
+		container,
+		krepis::FlowSequence::empty()
+			.insert(0, make_block(1))
+			.insert(1, make_block(2))
+	);
+	const auto base_revision = base.snapshot_id().content_revision;
+	Transaction transaction(base_revision);
+	transaction.merge_adjacent_paragraphs(container, make_block(1), make_block(2));
+	auto result = transaction.commit(base);
+	expect(result.is_ok(), "相鄰 Paragraph 可原子合併");
+	if (!result.is_ok()) return;
+	const auto* sequence = result.value().revision.flow_root(container);
+	expect(sequence != nullptr && sequence->block_count() == 1 &&
+	           sequence->at(0) == make_block(1),
+	       "merge 保留前一 BlockId 並移除後一 ID");
+	expect(paragraph_for(result.value().revision, make_block(1))->utf8() == "ABCD" &&
+	           result.value().revision.record_for(make_block(2)) == nullptr,
+	       "merge 串接兩段文字並 tombstone 後一 record");
+	expect(result.value().revision.snapshot_id().content_revision == base_revision + 1,
+	       "merge 只發布一個 revision");
+}
+
+void test_multiple_structure_commands_fail_closed() {
+	const auto flow = make_container(3);
+	auto base = with_paragraph(DocumentRevision::initial(), make_block(1), "AB");
+	base = base.with_flow_root(
+		flow,
+		krepis::FlowSequence::empty().insert(0, make_block(1))
+	);
+	Transaction transaction(base.snapshot_id().content_revision);
+	transaction.split_paragraph(flow, make_block(1), 1, make_block(2));
+	transaction.split_paragraph(flow, make_block(1), 1, make_block(3));
+	auto result = transaction.commit(base);
+	expect(!result.is_ok() && result.error().code() == ErrorCode::invalid_argument,
+	       "同一 Transaction 的第二個 structure command 不得靜默覆寫第一個");
+}
+
 }  // namespace
 
 int main() {
@@ -179,6 +267,9 @@ int main() {
 	test_non_paragraph_and_duplicate_targets_are_rejected();
 	test_stale_base_invalid_utf8_and_empty_transaction_are_rejected();
 	test_range_replace_uses_grapheme_boundaries_and_reports_effect();
+	test_enter_split_preserves_edge_block_and_uses_one_revision();
+	test_merge_adjacent_paragraphs_keeps_first_id();
+	test_multiple_structure_commands_fail_closed();
 
 	shutdown_default_reclamation_queue();
 	return krepis_test::report("krepis.transaction");

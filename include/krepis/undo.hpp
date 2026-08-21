@@ -35,6 +35,7 @@ public:
 private:
 	struct Entry {
 		std::vector<ParagraphTextEditRecord> edits;
+		std::vector<FlowStructureEditRecord> structures;
 		UndoRecordOptions options;
 	};
 

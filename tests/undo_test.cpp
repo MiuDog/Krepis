@@ -10,6 +10,7 @@
 #include <utility>
 
 using krepis::BlockId;
+using krepis::ContainerId;
 using krepis::DocumentRevision;
 using krepis::EditingSession;
 using krepis::ObjectId;
@@ -26,6 +27,10 @@ namespace {
 
 BlockId block(std::uint64_t value) {
 	return BlockId{ObjectId{0, value}};
+}
+
+ContainerId container(std::uint64_t value) {
+	return ContainerId{ObjectId{1, value}};
 }
 
 DocumentRevision with_paragraph(const char* text) {
@@ -190,6 +195,62 @@ void test_replacement_round_trip_and_composition_is_never_merged() {
 	       "一次 composition 確定即使同 merge group 也不與 typing 合併");
 }
 
+void test_split_and_merge_are_atomic_global_undo_entries() {
+	const auto flow = container(1);
+	auto split_base = with_paragraph("AB");
+	split_base = split_base.with_flow_root(
+		flow,
+		krepis::FlowSequence::empty().insert(0, block(1))
+	);
+	Transaction split(split_base.snapshot_id().content_revision);
+	split.split_paragraph(flow, block(1), 1, block(2));
+	auto split_result = split.commit(split_base);
+	expect(split_result.is_ok(), "structure undo fixture split 成功");
+	if (!split_result.is_ok()) return;
+	UndoManager split_undo;
+	expect(split_undo.record(split_result.value(), UndoRecordOptions{100, 1}).is_ok(),
+	       "split 可記錄為單一 global undo entry");
+	auto unsplit = split_undo.undo(split_result.value().revision);
+	expect(unsplit.is_ok(), "split 可一次 undo");
+	if (!unsplit.is_ok()) return;
+	expect(unsplit.value().invalidations.size() == 2,
+	       "undo split 同時失效 primary 與 secondary Block");
+	const auto* unsplit_flow = unsplit.value().revision.flow_root(flow);
+	expect(unsplit_flow != nullptr && unsplit_flow->block_count() == 1 &&
+	           unsplit_flow->at(0) == block(1) &&
+	           text_of(unsplit.value().revision) == "AB" &&
+	           unsplit.value().revision.record_for(block(2)) == nullptr,
+	       "undo split 復原原 ID、原文字與原順序");
+	auto resplit = split_undo.redo(unsplit.value().revision);
+	expect(resplit.is_ok(), "split 可一次 redo");
+	if (!resplit.is_ok()) return;
+	const auto* resplit_flow = resplit.value().revision.flow_root(flow);
+	expect(resplit_flow != nullptr && resplit_flow->block_count() == 2 &&
+	           resplit_flow->at(0) == block(1) && resplit_flow->at(1) == block(2),
+	       "redo split 重用同一 secondary BlockId");
+
+	Transaction merge(resplit.value().revision.snapshot_id().content_revision);
+	merge.merge_adjacent_paragraphs(flow, block(1), block(2));
+	auto merge_result = merge.commit(resplit.value().revision);
+	expect(merge_result.is_ok(), "structure undo fixture merge 成功");
+	if (!merge_result.is_ok()) return;
+	UndoManager merge_undo;
+	expect(merge_undo.record(merge_result.value(), UndoRecordOptions{200, 0}).is_ok(),
+	       "merge 可記錄為單一 global undo entry");
+	auto unmerged = merge_undo.undo(merge_result.value().revision);
+	expect(unmerged.is_ok(), "merge 可一次 undo");
+	if (!unmerged.is_ok()) return;
+	const auto* unmerged_flow = unmerged.value().revision.flow_root(flow);
+	expect(unmerged_flow != nullptr && unmerged_flow->block_count() == 2 &&
+	           unmerged_flow->at(1) == block(2),
+	       "undo merge 復原 secondary BlockId 的原位置");
+	auto secondary = unmerged.value().revision.record_for(block(2));
+	const auto* secondary_paragraph = dynamic_cast<const ParagraphRecord*>(secondary.get());
+	expect(text_of(unmerged.value().revision) == "A" &&
+	           secondary_paragraph != nullptr && secondary_paragraph->utf8() == "B",
+	       "undo merge 復原兩個 Paragraph 的原文字");
+}
+
 }  // namespace
 
 int main() {
@@ -197,5 +258,6 @@ int main() {
 	test_pause_group_and_never_policy_close_merge();
 	test_failed_undo_preserves_history_and_new_edit_clears_redo();
 	test_replacement_round_trip_and_composition_is_never_merged();
+	test_split_and_merge_are_atomic_global_undo_entries();
 	return krepis_test::report("krepis.undo");
 }

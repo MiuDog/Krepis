@@ -1,5 +1,6 @@
 #include "krepis/undo.hpp"
 
+#include "krepis/paragraph_record.hpp"
 #include "krepis/text_analysis.hpp"
 
 #include <utility>
@@ -22,10 +23,17 @@ Result<void> UndoManager::record(
 	const CommitResult& committed,
 	UndoRecordOptions options
 ) {
-	if (committed.text_edit_records.empty()) {
+	if (committed.text_edit_records.empty() && committed.flow_structure_records.empty()) {
 		return Error{ErrorCode::invalid_argument, "CommitResult 沒有可 undo 的 typed command"};
 	}
-	Entry incoming{committed.text_edit_records, options};
+	if (!committed.text_edit_records.empty() && !committed.flow_structure_records.empty()) {
+		return Error{ErrorCode::invalid_argument, "P1 undo entry 不接受文字與結構 command 混用"};
+	}
+	Entry incoming{
+		committed.text_edit_records,
+		committed.flow_structure_records,
+		options,
+	};
 	if (!undo_.empty() && can_merge(undo_.back(), incoming)) {
 		auto& prior = undo_.back();
 		prior.edits.front().inserted_utf8.append(incoming.edits.front().inserted_utf8);
@@ -42,7 +50,8 @@ Result<void> UndoManager::record(
 }
 
 bool UndoManager::can_merge(const Entry& prior, const Entry& incoming) const {
-	if (prior.edits.size() != 1 || incoming.edits.size() != 1 ||
+	if (!prior.structures.empty() || !incoming.structures.empty() ||
+	    prior.edits.size() != 1 || incoming.edits.size() != 1 ||
 	    prior.options.merge_group == 0 ||
 	    prior.options.merge_group != incoming.options.merge_group ||
 	    incoming.options.committed_at_ms < prior.options.committed_at_ms ||
@@ -66,6 +75,84 @@ Result<CommitResult> UndoManager::apply(
 	const Entry& entry,
 	bool inverse
 ) const {
+	if (!entry.structures.empty()) {
+		if (!entry.edits.empty() || entry.structures.size() != 1) {
+			return Error{ErrorCode::invalid_state, "P1 undo entry 的結構 command 數量不合法"};
+		}
+		const auto& edit = entry.structures.front();
+		const auto* current_sequence = current.flow_root(edit.container);
+		if (current_sequence == nullptr) {
+			return Error{ErrorCode::not_found, "undo 的 FlowContainer 不存在"};
+		}
+		const auto secondary_should_exist = edit.kind == FlowStructureEditKind::split_paragraph
+			? !inverse
+			: inverse;
+		auto next_sequence = *current_sequence;
+		if (secondary_should_exist) {
+			if (edit.secondary_position > next_sequence.block_count()) {
+				return Error{ErrorCode::out_of_range, "undo 回復位置超出 Flow 範圍"};
+			}
+			const auto secondary_slot = current.resolve(edit.secondary_block);
+			if (secondary_slot.is_valid() &&
+			    !current.locations().lookup(secondary_slot).is_empty()) {
+				return Error{ErrorCode::invalid_state, "undo 不得重複插入已有 owner 的 Block"};
+			}
+			next_sequence = next_sequence.insert(edit.secondary_position, edit.secondary_block);
+		} else {
+			if (edit.secondary_position >= next_sequence.block_count() ||
+			    next_sequence.at(edit.secondary_position) != edit.secondary_block) {
+				return Error{ErrorCode::invalid_state, "undo 的結構位置已與 history 分岔"};
+			}
+			next_sequence = next_sequence.remove(edit.secondary_position);
+		}
+
+		const auto& primary_text = inverse
+			? edit.primary_before_utf8
+			: edit.primary_after_utf8;
+		auto primary = ParagraphRecord::create(
+			current.snapshot_id().content_revision + 1,
+			primary_text
+		);
+		if (!primary.is_ok()) return primary.error();
+		std::vector<FlowRecordMutation> mutations;
+		mutations.push_back({edit.primary_block, std::move(primary).take(), false});
+		if (secondary_should_exist) {
+			auto secondary = ParagraphRecord::create(
+				current.snapshot_id().content_revision + 1,
+				edit.secondary_utf8
+			);
+			if (!secondary.is_ok()) return secondary.error();
+			mutations.push_back({edit.secondary_block, std::move(secondary).take(), false});
+		} else {
+			mutations.push_back({edit.secondary_block, {}, true});
+		}
+		auto revision = current.with_atomic_flow_edit(
+			edit.container,
+			std::move(next_sequence),
+			mutations
+		);
+		if (!revision.is_ok()) return revision.error();
+		auto committed = std::move(revision).take();
+		if (!committed.validate().ok()) {
+			return Error{ErrorCode::invalid_state, "undo 結構 command 產生無效 revision"};
+		}
+		return CommitResult{
+			std::move(committed),
+			{{
+				edit.primary_block,
+				current.snapshot_id().content_revision + 1,
+				InvalidationStage::shaping,
+			}, {
+				edit.secondary_block,
+				current.snapshot_id().content_revision + 1,
+				InvalidationStage::shaping,
+			}},
+			{},
+			{},
+			{edit},
+		};
+	}
+
 	Transaction transaction(current.snapshot_id().content_revision);
 	for (const auto& edit : entry.edits) {
 		auto removed_count = grapheme_count(edit.removed_utf8);

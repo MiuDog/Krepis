@@ -57,6 +57,12 @@ struct RecordUpdate {
 	IntrusivePtr<const ObjectRecord> record;
 };
 
+struct FlowRecordMutation {
+	BlockId block;
+	IntrusivePtr<const ObjectRecord> record;
+	bool tombstone = false;
+};
+
 // 一次 authority 發布的完整、不可變文件狀態。
 //
 // 責任：把 SnapshotId、IdDirectory、記錄內容、位置索引與所有 FlowSequence root
@@ -111,6 +117,12 @@ public:
 	// 任一目標不存在或 record 為 null 時不產生部分 revision。
 	[[nodiscard]] Result<DocumentRevision> with_updated_records(
 		std::span<const RecordUpdate> updates
+	) const;
+	// 在一個 content revision 內同時更新 Flow 順序、record 與 LocationIndex。
+	[[nodiscard]] Result<DocumentRevision> with_atomic_flow_edit(
+		ContainerId container,
+		FlowSequence sequence,
+		std::span<const FlowRecordMutation> mutations
 	) const;
 
     // 刪除物件：寫入 tombstone 並清除位置索引。

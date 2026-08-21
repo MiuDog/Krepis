@@ -9,6 +9,7 @@
 #include "krepis/object_id.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,11 +41,28 @@ struct ParagraphTextEditRecord {
 	TextEditMergePolicy merge_policy = TextEditMergePolicy::never;
 };
 
+enum class FlowStructureEditKind : std::uint8_t {
+	split_paragraph,
+	merge_paragraphs,
+};
+
+struct FlowStructureEditRecord {
+	FlowStructureEditKind kind;
+	ContainerId container;
+	std::size_t secondary_position;
+	BlockId primary_block;
+	BlockId secondary_block;
+	std::string primary_before_utf8;
+	std::string primary_after_utf8;
+	std::string secondary_utf8;
+};
+
 struct CommitResult {
 	DocumentRevision revision;
 	std::vector<LayoutInvalidation> invalidations;
 	std::vector<ParagraphTextEditEffect> text_edit_effects;
 	std::vector<ParagraphTextEditRecord> text_edit_records;
+	std::vector<FlowStructureEditRecord> flow_structure_records;
 };
 
 class Transaction {
@@ -59,6 +77,17 @@ public:
 		std::string utf8,
 		TextEditMergePolicy merge_policy = TextEditMergePolicy::never
 	);
+	void split_paragraph(
+		ContainerId container,
+		BlockId block,
+		std::size_t grapheme_boundary,
+		BlockId new_block
+	);
+	void merge_adjacent_paragraphs(
+		ContainerId container,
+		BlockId first,
+		BlockId second
+	);
 
 	[[nodiscard]] Result<CommitResult> commit(const DocumentRevision& base) const;
 
@@ -71,9 +100,23 @@ private:
 		std::string utf8;
 		TextEditMergePolicy merge_policy;
 	};
+	struct SplitParagraph {
+		ContainerId container;
+		BlockId block;
+		std::size_t grapheme_boundary;
+		BlockId new_block;
+	};
+	struct MergeParagraphs {
+		ContainerId container;
+		BlockId first;
+		BlockId second;
+	};
 
 	std::uint64_t base_content_revision_;
 	std::vector<ReplaceParagraphText> replacements_;
+	std::optional<SplitParagraph> split_;
+	std::optional<MergeParagraphs> merge_;
+	std::size_t structure_command_count_ = 0;
 };
 
 }  // namespace krepis
