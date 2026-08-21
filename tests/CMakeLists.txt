@@ -88,3 +88,6 @@ add_test(NAME krepis.undo COMMAND krepis_undo_test)
 
 krepis_add_test(krepis_layout_invalidation_test layout_invalidation_test.cpp)
 add_test(NAME krepis.layout_invalidation COMMAND krepis_layout_invalidation_test)
+
+krepis_add_test(krepis_spatial_container_test spatial_container_test.cpp)
+add_test(NAME krepis.spatial_container COMMAND krepis_spatial_container_test)

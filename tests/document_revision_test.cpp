@@ -18,7 +18,10 @@ using krepis::ObjectRecord;
 using krepis::ObjectSlot;
 using krepis::ObjectStoreSnapshot;
 using krepis::RevisionValidation;
+using krepis::RectD;
 using krepis::SnapshotId;
+using krepis::SpatialContainer;
+using krepis::SpatialPlacement;
 using krepis::make_intrusive;
 using krepis::shutdown_default_reclamation_queue;
 using krepis_test::expect;
@@ -487,6 +490,36 @@ void test_global_relabel_advances_storage_generation() {
     expect(exercised_global, "大型 window 必須實際走到 global relabel 分支");
 }
 
+void test_replacing_roots_clears_removed_locations() {
+	const auto flow_container = make_container(701);
+	auto flow = FlowSequence::empty().insert(0, make_block(1)).insert(1, make_block(2));
+	auto revision = DocumentRevision::initial().with_flow_root(flow_container, std::move(flow));
+	revision = revision.with_flow_root(
+		flow_container,
+		FlowSequence::empty().insert(0, make_block(2))
+	);
+	expect(revision.locations().lookup(revision.resolve(make_block(1))).is_empty(),
+	       "替換 Flow root 會清除被移除 Block 的舊 locator");
+	expect(revision.validate().ok(), "替換 Flow root 後 revision 仍一致");
+
+	const auto spatial_container = make_container(702);
+	auto spatial = SpatialContainer::create({
+		SpatialPlacement{1, make_block(3), RectD{0, 0, 10, 10}, 10, 10, 0},
+		SpatialPlacement{2, make_block(4), RectD{20, 0, 10, 10}, 10, 10, 0},
+	});
+	expect(spatial.is_ok(), "Spatial root fixture 建立成功");
+	if (!spatial.is_ok()) return;
+	revision = revision.with_spatial_root(spatial_container, std::move(spatial).take());
+	auto replacement = SpatialContainer::create({
+		SpatialPlacement{2, make_block(4), RectD{20, 0, 10, 10}, 10, 10, 0},
+	});
+	if (!replacement.is_ok()) return;
+	revision = revision.with_spatial_root(spatial_container, std::move(replacement).take());
+	expect(revision.locations().lookup(revision.resolve(make_block(3))).is_empty(),
+	       "替換 Spatial root 會清除被移除 Block 的舊 locator");
+	expect(revision.validate().ok(), "替換 Spatial root 後 revision 仍一致");
+}
+
 }  // namespace
 
 int main() {
@@ -515,6 +548,7 @@ int main() {
     test_flow_insert_publishes_relabel_and_locations_atomically();
     test_first_flow_insert_creates_container_atomically();
     test_global_relabel_advances_storage_generation();
+	test_replacing_roots_clears_removed_locations();
 
     shutdown_default_reclamation_queue();
     return krepis_test::report("krepis.document_revision");

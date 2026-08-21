@@ -18,6 +18,7 @@
 #include "krepis/object_id.hpp"
 #include "krepis/object_store.hpp"
 #include "krepis/snapshot_id.hpp"
+#include "krepis/spatial_container.hpp"
 
 #include <cstddef>
 #include <optional>
@@ -37,6 +38,8 @@ struct RevisionValidation {
         owner_mismatch,
         // LocationIndex 記載的 leaf key 與該 Block 實際所在的 leaf 不符。
         leaf_key_mismatch,
+		// SpatialLocator 的 placement key 與 owner root 不一致。
+		spatial_placement_mismatch,
         // Block 的 ObjectId 無法解析為 slot。
         unresolved_block_id,
     };
@@ -73,10 +76,15 @@ public:
 
     // 取得某個 Container 的 FlowSequence。不存在時回傳 nullptr。
     [[nodiscard]] const FlowSequence* flow_root(ContainerId container) const;
+	[[nodiscard]] const SpatialContainer* spatial_root(ContainerId container) const;
 
     [[nodiscard]] std::size_t container_count() const noexcept { return flow_roots_.size(); }
 	// 前置條件：index < container_count()。只供序列化與診斷列舉，不具有順序語意。
 	[[nodiscard]] ContainerId container_id_at(std::size_t index) const;
+	[[nodiscard]] std::size_t spatial_container_count() const noexcept {
+		return spatial_roots_.size();
+	}
+	[[nodiscard]] ContainerId spatial_container_id_at(std::size_t index) const;
 
     // 解析 BlockId 為 slot。找不到回傳 invalid_object_slot。
     [[nodiscard]] ObjectSlot resolve(BlockId block) const;
@@ -110,6 +118,10 @@ public:
     // 這是唯一會同時改動順序與位置索引的入口——D12 要求兩者在同一交易內更新。
     [[nodiscard]] DocumentRevision with_flow_root(ContainerId container,
                                                   FlowSequence sequence) const;
+	[[nodiscard]] DocumentRevision with_spatial_root(
+		ContainerId container,
+		SpatialContainer spatial
+	) const;
 
     // D22：只套用 typed edit 明列的 locator 更新。來源 root 不符時整筆拒絕。
     [[nodiscard]] Result<DocumentRevision> with_flow_insert(
@@ -126,10 +138,12 @@ public:
 
 private:
     using FlowRootEntry = std::pair<ContainerId, FlowSequence>;
+	using SpatialRootEntry = std::pair<ContainerId, SpatialContainer>;
 
     DocumentRevision(SnapshotId snapshot_id, IntrusivePtr<const IdDirectory> directory,
                      ObjectStoreSnapshot store, LocationIndex locations,
-                     std::vector<FlowRootEntry> flow_roots) noexcept;
+                     std::vector<FlowRootEntry> flow_roots,
+	                 std::vector<SpatialRootEntry> spatial_roots) noexcept;
 
     [[nodiscard]] SnapshotId next_content_revision() const noexcept;
 
@@ -140,6 +154,7 @@ private:
     // Container 數量遠少於 Block 數量，線性搜尋足夠；
     // 若容器數成長到需要索引，應以量測驅動而非預先最佳化。
     std::vector<FlowRootEntry> flow_roots_;
+	std::vector<SpatialRootEntry> spatial_roots_;
 };
 
 }  // namespace krepis

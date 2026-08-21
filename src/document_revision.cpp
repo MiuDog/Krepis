@@ -8,16 +8,18 @@ namespace krepis {
 DocumentRevision::DocumentRevision(SnapshotId snapshot_id,
                                    IntrusivePtr<const IdDirectory> directory,
                                    ObjectStoreSnapshot store, LocationIndex locations,
-                                   std::vector<FlowRootEntry> flow_roots) noexcept
+                                   std::vector<FlowRootEntry> flow_roots,
+	                               std::vector<SpatialRootEntry> spatial_roots) noexcept
     : snapshot_id_(snapshot_id),
       directory_(std::move(directory)),
       store_(std::move(store)),
       locations_(std::move(locations)),
-      flow_roots_(std::move(flow_roots)) {}
+      flow_roots_(std::move(flow_roots)),
+	  spatial_roots_(std::move(spatial_roots)) {}
 
 DocumentRevision DocumentRevision::initial() {
     return DocumentRevision(SnapshotId{0, 0}, IdDirectory::empty(), ObjectStoreSnapshot::empty(),
-                            LocationIndex::empty(), {});
+                            LocationIndex::empty(), {}, {});
 }
 
 SnapshotId DocumentRevision::next_content_revision() const noexcept {
@@ -33,9 +35,21 @@ const FlowSequence* DocumentRevision::flow_root(ContainerId container) const {
     return nullptr;
 }
 
+const SpatialContainer* DocumentRevision::spatial_root(ContainerId container) const {
+	for (const auto& entry : spatial_roots_) {
+		if (entry.first == container) return &entry.second;
+	}
+	return nullptr;
+}
+
 ContainerId DocumentRevision::container_id_at(std::size_t index) const {
 	assert(index < flow_roots_.size());
 	return flow_roots_[index].first;
+}
+
+ContainerId DocumentRevision::spatial_container_id_at(std::size_t index) const {
+	assert(index < spatial_roots_.size());
+	return spatial_roots_[index].first;
 }
 
 ObjectSlot DocumentRevision::resolve(BlockId block) const {
@@ -52,7 +66,7 @@ DocumentRevision DocumentRevision::with_new_object(
     auto new_store = store_.with_record(allocated.slot, std::move(record));
 
     return DocumentRevision(next_content_revision(), std::move(allocated.directory),
-                            std::move(new_store), locations_, flow_roots_);
+                            std::move(new_store), locations_, flow_roots_, spatial_roots_);
 }
 
 DocumentRevision DocumentRevision::with_updated_record(
@@ -63,7 +77,7 @@ DocumentRevision DocumentRevision::with_updated_record(
     auto new_store = store_.with_record(slot, std::move(record));
 
     return DocumentRevision(next_content_revision(), directory_, std::move(new_store), locations_,
-                            flow_roots_);
+                            flow_roots_, spatial_roots_);
 }
 
 Result<DocumentRevision> DocumentRevision::with_updated_records(
@@ -92,7 +106,8 @@ Result<DocumentRevision> DocumentRevision::with_updated_records(
 		directory_,
 		std::move(new_store),
 		locations_,
-		flow_roots_
+		flow_roots_,
+		spatial_roots_
 	);
 }
 
@@ -106,7 +121,7 @@ DocumentRevision DocumentRevision::with_deleted_object(BlockId block) const {
     auto new_locations = locations_.clear(slot);
 
     return DocumentRevision(next_content_revision(), directory_, std::move(new_store),
-                            std::move(new_locations), flow_roots_);
+                            std::move(new_locations), flow_roots_, spatial_roots_);
 }
 
 DocumentRevision DocumentRevision::with_flow_root(ContainerId container,
@@ -115,6 +130,15 @@ DocumentRevision DocumentRevision::with_flow_root(ContainerId container,
     // 因此本方法同時重建受影響 Container 的所有 LocationIndex entry。
     auto new_directory = directory_;
     auto new_locations = locations_;
+	if (const auto* prior = flow_root(container); prior != nullptr) {
+		for (std::size_t i = 0; i < prior->block_count(); ++i) {
+			const auto slot = new_directory->resolve(prior->at(i).raw());
+			const auto location = new_locations.lookup(slot);
+			if (location.is_flow() && location.owner == container) {
+				new_locations = new_locations.clear(slot);
+			}
+		}
+	}
 
     for (std::size_t i = 0; i < sequence.block_count(); ++i) {
         const auto block = sequence.at(i);
@@ -141,7 +165,51 @@ DocumentRevision DocumentRevision::with_flow_root(ContainerId container,
     }
 
     return DocumentRevision(next_content_revision(), std::move(new_directory), store_,
-                            std::move(new_locations), std::move(new_roots));
+                            std::move(new_locations), std::move(new_roots), spatial_roots_);
+}
+
+DocumentRevision DocumentRevision::with_spatial_root(
+	ContainerId container,
+	SpatialContainer spatial
+) const {
+	auto new_directory = directory_;
+	auto new_locations = locations_;
+	if (const auto* prior = spatial_root(container); prior != nullptr) {
+		for (std::size_t i = 0; i < prior->placement_count(); ++i) {
+			const auto slot = new_directory->resolve(prior->placement_at(i).child.raw());
+			const auto location = new_locations.lookup(slot);
+			if (location.is_spatial() && location.owner == container) {
+				new_locations = new_locations.clear(slot);
+			}
+		}
+	}
+	for (std::size_t i = 0; i < spatial.placement_count(); ++i) {
+		const auto& placement = spatial.placement_at(i);
+		auto allocated = new_directory->allocate(placement.child.raw());
+		new_directory = std::move(allocated.directory);
+		new_locations = new_locations.set(
+			allocated.slot,
+			make_spatial_location(container, placement.placement_key)
+		);
+	}
+	auto roots = spatial_roots_;
+	bool replaced = false;
+	for (auto& entry : roots) {
+		if (entry.first == container) {
+			entry.second = std::move(spatial);
+			replaced = true;
+			break;
+		}
+	}
+	if (!replaced) roots.emplace_back(container, std::move(spatial));
+	return DocumentRevision(
+		next_content_revision(),
+		std::move(new_directory),
+		store_,
+		std::move(new_locations),
+		flow_roots_,
+		std::move(roots)
+	);
 }
 
 Result<DocumentRevision> DocumentRevision::with_flow_insert(
@@ -180,13 +248,13 @@ Result<DocumentRevision> DocumentRevision::with_flow_insert(
         snapshot_id_.storage_generation + (edit.diagnostics().global_rebuild ? 1u : 0u),
     };
     return DocumentRevision(next, std::move(new_directory), store_,
-                            std::move(new_locations), std::move(new_roots));
+                            std::move(new_locations), std::move(new_roots), spatial_roots_);
 }
 
 DocumentRevision DocumentRevision::with_storage_rebuild() const {
     // 只遞增 storage_generation：內容不變，但持有內部 handle 的工作必須失效（D18）。
     const SnapshotId rebuilt{snapshot_id_.content_revision, snapshot_id_.storage_generation + 1};
-    return DocumentRevision(rebuilt, directory_, store_, locations_, flow_roots_);
+    return DocumentRevision(rebuilt, directory_, store_, locations_, flow_roots_, spatial_roots_);
 }
 
 RevisionValidation DocumentRevision::validate() const {
@@ -214,6 +282,29 @@ RevisionValidation DocumentRevision::validate() const {
             }
         }
     }
+	for (const auto& [container, spatial] : spatial_roots_) {
+		for (std::size_t i = 0; i < spatial.placement_count(); ++i) {
+			const auto& placement = spatial.placement_at(i);
+			const auto slot = directory_->resolve(placement.child.raw());
+			if (!slot.is_valid()) {
+				return {RevisionValidation::Failure::unresolved_block_id,
+				        placement.child, container};
+			}
+			const auto location = locations_.lookup(slot);
+			if (!location.is_spatial()) {
+				return {RevisionValidation::Failure::missing_location_entry,
+				        placement.child, container};
+			}
+			if (location.owner != container) {
+				return {RevisionValidation::Failure::owner_mismatch,
+				        placement.child, container};
+			}
+			if (location.spatial.placement_key != placement.placement_key) {
+				return {RevisionValidation::Failure::spatial_placement_mismatch,
+				        placement.child, container};
+			}
+		}
+	}
     return {};
 }
 
