@@ -53,4 +53,13 @@ struct TextAnalysis {
 	BaseDirection base_direction = BaseDirection::auto_ltr
 );
 
+// 對同一個已解析 paragraph 的實際行範圍套用 UAX #9 L1／L2。
+// range 必須位於單一 bidi paragraph，且兩端都是 UTF-8 boundary。
+[[nodiscard]] Result<std::vector<BidiRun>> analyze_bidi_line(
+	std::string_view utf8,
+	std::size_t byte_offset,
+	std::size_t byte_length,
+	BaseDirection base_direction = BaseDirection::auto_ltr
+);
+
 }  // namespace krepis

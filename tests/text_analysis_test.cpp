@@ -13,6 +13,7 @@ using krepis::BaseDirection;
 using krepis::BreakKind;
 using krepis::TextAnalysis;
 using krepis::analyze_text;
+using krepis::analyze_bidi_line;
 using krepis::is_utf8_boundary;
 using krepis_test::expect;
 
@@ -167,6 +168,15 @@ void test_bidi_numbers_and_script_runs() {
 	expect_all_ranges_are_utf8_boundaries(text, result.value());
 }
 
+void test_bidi_line_rejects_cross_paragraph_range() {
+	const std::string text = "abc\ndef";
+	auto crossing = analyze_bidi_line(text, 0, text.size(), BaseDirection::auto_ltr);
+	expect(!crossing.is_ok() && crossing.error().code() == krepis::ErrorCode::out_of_range,
+	       "line-level bidi 不接受跨 paragraph range");
+	auto second = analyze_bidi_line(text, 4, 3, BaseDirection::auto_ltr);
+	expect(second.is_ok() && !second.value().empty(), "可對第二個 paragraph 的單行範圍重排");
+}
+
 }  // namespace
 
 int main() {
@@ -174,5 +184,6 @@ int main() {
 	test_grapheme_and_cjk_breaks();
 	test_explicit_url_and_path_tokens_are_atomic();
 	test_bidi_numbers_and_script_runs();
+	test_bidi_line_rejects_cross_paragraph_range();
 	return krepis_test::report("krepis.text_analysis");
 }

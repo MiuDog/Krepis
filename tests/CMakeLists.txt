@@ -65,6 +65,12 @@ target_compile_definitions(krepis_text_shaper_test PRIVATE
 )
 add_test(NAME krepis.text_shaper COMMAND krepis_text_shaper_test)
 
+krepis_add_test(krepis_text_layout_test text_layout_test.cpp)
+target_compile_definitions(krepis_text_layout_test PRIVATE
+    KREPIS_TEST_LATIN_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+)
+add_test(NAME krepis.text_layout COMMAND krepis_text_layout_test)
+
 krepis_add_test(krepis_transaction_test transaction_test.cpp)
 add_test(NAME krepis.transaction COMMAND krepis_transaction_test)
 

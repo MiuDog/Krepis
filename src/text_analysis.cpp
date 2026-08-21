@@ -252,4 +252,65 @@ Result<TextAnalysis> analyze_text(
 	return result;
 }
 
+Result<std::vector<BidiRun>> analyze_bidi_line(
+	std::string_view utf8,
+	std::size_t byte_offset,
+	std::size_t byte_length,
+	BaseDirection base_direction
+) {
+	if (auto validation = validate_utf8(utf8); !validation.is_ok()) {
+		return validation.error();
+	}
+	if (byte_offset > utf8.size() || byte_length > utf8.size() - byte_offset ||
+	    !is_utf8_boundary(utf8, byte_offset) ||
+	    !is_utf8_boundary(utf8, byte_offset + byte_length)) {
+		return Error{ErrorCode::out_of_range, "bidi line range 不是合法 UTF-8 byte range"};
+	}
+	if (byte_length == 0) return std::vector<BidiRun>{};
+
+	const auto sequence = make_sequence(utf8);
+	auto algorithm = own_or_terminate<AlgorithmOwner>(SBAlgorithmCreate(&sequence));
+	std::size_t paragraph_offset = 0;
+	while (paragraph_offset < utf8.size()) {
+		SBUInteger paragraph_length = 0;
+		SBAlgorithmGetParagraphBoundary(
+			algorithm.get(),
+			paragraph_offset,
+			utf8.size() - paragraph_offset,
+			&paragraph_length,
+			nullptr
+		);
+		if (paragraph_length == 0) std::terminate();
+		const auto paragraph_limit = paragraph_offset + paragraph_length;
+		if (byte_offset >= paragraph_offset &&
+		    byte_offset + byte_length <= paragraph_limit) {
+			auto paragraph = own_or_terminate<ParagraphOwner>(SBAlgorithmCreateParagraph(
+				algorithm.get(),
+				paragraph_offset,
+				paragraph_length,
+				to_sheen_level(base_direction)
+			));
+			auto line = own_or_terminate<LineOwner>(SBParagraphCreateLine(
+				paragraph.get(),
+				byte_offset,
+				byte_length
+			));
+			std::vector<BidiRun> result;
+			const auto count = SBLineGetRunCount(line.get());
+			const auto* runs = SBLineGetRunsPtr(line.get());
+			result.reserve(count);
+			for (SBUInteger index = 0; index < count; ++index) {
+				result.push_back(BidiRun{
+					runs[index].offset,
+					runs[index].length,
+					runs[index].level,
+				});
+			}
+			return result;
+		}
+		paragraph_offset = paragraph_limit;
+	}
+	return Error{ErrorCode::out_of_range, "bidi line range 跨越 paragraph boundary"};
+}
+
 }  // namespace krepis

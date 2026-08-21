@@ -128,6 +128,19 @@ if(MSVC)
     target_compile_options(bench_leaf_key_relabel PRIVATE /utf-8 /W4 /permissive-)
 endif()
 
+# Benchmark: paragraph layout LRU 容量與同步路徑 p99（TXT-0001 Phase 2C）
+add_executable(bench_text_layout_cache
+    bench_text_layout_cache/bench_text_layout_cache.cpp
+)
+target_link_libraries(bench_text_layout_cache PRIVATE krepis::krepis)
+target_compile_definitions(bench_text_layout_cache PRIVATE
+    KREPIS_BENCH_LATIN_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+)
+target_compile_features(bench_text_layout_cache PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(bench_text_layout_cache PRIVATE /utf-8 /W4 /permissive-)
+endif()
+
 # Spike 5: 跨平台 text shaping（重用正式 HarfBuzz target，依 FND-0003）
 #
 # 依賴已由正式文字管線載入；此開關只控制列印型 spike executable。

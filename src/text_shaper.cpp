@@ -42,6 +42,18 @@ namespace {
 	       (scalar >= 0xE0100u && scalar <= 0xE01EFu);
 }
 
+[[nodiscard]] bool is_paragraph_separator_grapheme(
+	std::string_view text,
+	std::size_t begin,
+	std::size_t end
+) noexcept {
+	if (end <= begin || end - begin > 2) return false;
+	for (auto offset = begin; offset < end; ++offset) {
+		if (text[offset] != '\r' && text[offset] != '\n') return false;
+	}
+	return true;
+}
+
 [[nodiscard]] const ScriptRun* find_script_run(
 	const TextAnalysis& analysis,
 	std::size_t byte_offset
@@ -90,7 +102,50 @@ public:
 		auto analysis_result = analyze_text(utf8, language, base_direction);
 		if (!analysis_result.is_ok()) return analysis_result.error();
 
-		ShapedParagraph result{std::move(analysis_result).take(), {}};
+		return shape_with_analysis(
+			utf8,
+			language,
+			font_size_26_6,
+			std::move(analysis_result).take()
+		);
+	}
+
+	[[nodiscard]] Result<ShapedParagraph> shape_line(
+		std::string_view utf8,
+		const TextAnalysis& paragraph_analysis,
+		std::string_view language,
+		BaseDirection base_direction,
+		std::int32_t font_size_26_6,
+		std::size_t byte_offset,
+		std::size_t byte_length
+	) {
+		if (font_size_26_6 <= 0) {
+			return Error{ErrorCode::invalid_argument, "字型尺寸必須大於零"};
+		}
+		if (utf8.size() > static_cast<std::size_t>(INT_MAX)) {
+			return Error{ErrorCode::invalid_argument, "單一段落超出 HarfBuzz 長度上限"};
+		}
+		refresh_revision();
+		auto line_runs = analyze_bidi_line(
+			utf8,
+			byte_offset,
+			byte_length,
+			base_direction
+		);
+		if (!line_runs.is_ok()) return line_runs.error();
+		TextAnalysis analysis = paragraph_analysis;
+		analysis.bidi_runs = std::move(line_runs).take();
+		return shape_with_analysis(utf8, language, font_size_26_6, std::move(analysis));
+	}
+
+private:
+	[[nodiscard]] Result<ShapedParagraph> shape_with_analysis(
+		std::string_view utf8,
+		std::string_view language,
+		std::int32_t font_size_26_6,
+		TextAnalysis analysis
+	) {
+		ShapedParagraph result{std::move(analysis), {}};
 		if (utf8.empty()) return result;
 
 		for (const auto& bidi : result.analysis.bidi_runs) {
@@ -106,6 +161,7 @@ public:
 				const auto begin = result.analysis.grapheme_boundaries[index];
 				const auto end = result.analysis.grapheme_boundaries[index + 1];
 				if (begin < bidi.byte_offset || end > bidi_limit) continue;
+				if (is_paragraph_separator_grapheme(utf8, begin, end)) continue;
 
 				const auto* script = find_script_run(result.analysis, begin);
 				if (script == nullptr) std::terminate();
@@ -139,7 +195,6 @@ public:
 		return result;
 	}
 
-private:
 	struct Face {
 		hb_blob_t* blob = nullptr;
 		hb_face_t* face = nullptr;
@@ -288,6 +343,10 @@ private:
 			: hb_language_from_string(language.data(), static_cast<int>(language.size()));
 		hb_buffer_set_language(buffer.get(), hb_language);
 		hb_shape(opened.value()->font, buffer.get(), nullptr, 0);
+		hb_font_extents_t extents{};
+		if (!hb_font_get_h_extents(opened.value()->font, &extents)) {
+			return Error{ErrorCode::invalid_state, "字型沒有 horizontal extents"};
+		}
 
 		unsigned int count = 0;
 		const auto* infos = hb_buffer_get_glyph_infos(buffer.get(), &count);
@@ -298,6 +357,9 @@ private:
 			segment.byte_length,
 			segment.direction,
 			segment.script_tag,
+			extents.ascender,
+			extents.descender,
+			extents.line_gap,
 			{},
 		};
 		result.glyphs.reserve(count);
@@ -340,6 +402,26 @@ Result<ShapedParagraph> TextShaper::shape(
 	std::int32_t font_size_26_6
 ) {
 	return impl_->shape(utf8, language, base_direction, font_size_26_6);
+}
+
+Result<ShapedParagraph> TextShaper::shape_line(
+	std::string_view utf8,
+	const TextAnalysis& paragraph_analysis,
+	std::string_view language,
+	BaseDirection base_direction,
+	std::int32_t font_size_26_6,
+	std::size_t byte_offset,
+	std::size_t byte_length
+) {
+	return impl_->shape_line(
+		utf8,
+		paragraph_analysis,
+		language,
+		base_direction,
+		font_size_26_6,
+		byte_offset,
+		byte_length
+	);
 }
 
 }  // namespace krepis

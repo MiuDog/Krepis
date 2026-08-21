@@ -159,6 +159,35 @@ void test_coverage_cache_follows_font_set_revision() {
 	       "revision 改變會清除候選與 face coverage cache");
 }
 
+void test_shape_line_applies_exact_bidi_range() {
+	FixtureFontProvider provider;
+	TextShaper shaper(provider);
+	const std::string text =
+		"abc \xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7 def";
+	auto paragraph = shaper.shape(text, "ar", BaseDirection::auto_ltr, 16 * 64);
+	expect(paragraph.is_ok(), "混合方向 paragraph 可先做 provisional shaping");
+	if (!paragraph.is_ok()) return;
+	const auto begin = text.find("\xD9\x85");
+	const std::size_t length = 10;
+	auto line = shaper.shape_line(
+		text,
+		paragraph.value().analysis,
+		"ar",
+		BaseDirection::auto_ltr,
+		16 * 64,
+		begin,
+		length
+	);
+	expect(line.is_ok(), "實際 line range 可重新 bidi reorder 與 shaping");
+	if (!line.is_ok()) return;
+	expect(!line.value().glyph_runs.empty(), "line reshaping 產生 glyph runs");
+	for (const auto& run : line.value().glyph_runs) {
+		expect(run.byte_offset >= begin && run.byte_offset + run.byte_length <= begin + length,
+		       "line reshaping 不洩漏 range 外 glyph");
+		expect(run.direction == GlyphDirection::rtl, "Arabic line range 維持 RTL");
+	}
+}
+
 }  // namespace
 
 int main() {
@@ -166,5 +195,6 @@ int main() {
 	test_combining_and_rtl_cluster_mapping();
 	test_missing_glyph_fails_with_byte_offset();
 	test_coverage_cache_follows_font_set_revision();
+	test_shape_line_applies_exact_bidi_range();
 	return krepis_test::report("krepis.text_shaper");
 }

@@ -56,6 +56,9 @@ struct GlyphRun {
 	std::size_t byte_length;
 	GlyphDirection direction;
 	std::uint32_t script_tag;
+	std::int32_t ascender_26_6;
+	std::int32_t descender_26_6;
+	std::int32_t line_gap_26_6;
 	std::vector<Glyph> glyphs;
 };
 
@@ -80,6 +83,17 @@ public:
 		std::string_view language,
 		BaseDirection base_direction,
 		std::int32_t font_size_26_6
+	);
+
+	// 使用 paragraph-level analysis，但以實際 line range 重新套用 bidi L1／L2 並 reshaping。
+	[[nodiscard]] Result<ShapedParagraph> shape_line(
+		std::string_view utf8,
+		const TextAnalysis& paragraph_analysis,
+		std::string_view language,
+		BaseDirection base_direction,
+		std::int32_t font_size_26_6,
+		std::size_t byte_offset,
+		std::size_t byte_length
 	);
 
 private:
