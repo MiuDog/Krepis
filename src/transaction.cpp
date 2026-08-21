@@ -12,14 +12,22 @@ Transaction::Transaction(std::uint64_t base_content_revision) noexcept
 	: base_content_revision_(base_content_revision) {}
 
 void Transaction::replace_paragraph_text(BlockId block, std::string utf8) {
-	replacements_.push_back({block, 0, 0, true, std::move(utf8)});
+	replacements_.push_back({
+		block,
+		0,
+		0,
+		true,
+		std::move(utf8),
+		TextEditMergePolicy::never,
+	});
 }
 
 void Transaction::replace_paragraph_range(
 	BlockId block,
 	std::size_t grapheme_start,
 	std::size_t grapheme_end,
-	std::string utf8
+	std::string utf8,
+	TextEditMergePolicy merge_policy
 ) {
 	replacements_.push_back({
 		block,
@@ -27,6 +35,7 @@ void Transaction::replace_paragraph_range(
 		grapheme_end,
 		false,
 		std::move(utf8),
+		merge_policy,
 	});
 }
 
@@ -49,6 +58,8 @@ Result<CommitResult> Transaction::commit(const DocumentRevision& base) const {
 	invalidations.reserve(replacements_.size());
 	std::vector<ParagraphTextEditEffect> text_edit_effects;
 	text_edit_effects.reserve(replacements_.size());
+	std::vector<ParagraphTextEditRecord> text_edit_records;
+	text_edit_records.reserve(replacements_.size());
 
 	// 步驟 1：驗證全部 command，並建立尚未發布的 immutable records。
 	for (const auto& replacement : replacements_) {
@@ -78,6 +89,11 @@ Result<CommitResult> Transaction::commit(const DocumentRevision& base) const {
 		}
 		const auto byte_start = old_analysis.value().grapheme_boundaries[start];
 		const auto byte_end = old_analysis.value().grapheme_boundaries[end];
+		const std::string removed(
+			paragraph->utf8(),
+			byte_start,
+			byte_end - byte_start
+		);
 		std::string updated;
 		updated.reserve(paragraph->utf8().size() - (byte_end - byte_start) + replacement.utf8.size());
 		updated.append(paragraph->utf8(), 0, byte_start);
@@ -93,13 +109,20 @@ Result<CommitResult> Transaction::commit(const DocumentRevision& base) const {
 			next_revision,
 			InvalidationStage::shaping,
 		});
-		text_edit_effects.push_back(ParagraphTextEditEffect{
+		auto effect = ParagraphTextEditEffect{
 			replacement.block,
 			base_content_revision_,
 			next_revision,
 			start,
 			end,
 			inserted_count,
+		};
+		text_edit_effects.push_back(effect);
+		text_edit_records.push_back(ParagraphTextEditRecord{
+			effect,
+			removed,
+			replacement.utf8,
+			replacement.merge_policy,
 		});
 	}
 
@@ -116,6 +139,7 @@ Result<CommitResult> Transaction::commit(const DocumentRevision& base) const {
 		std::move(committed_revision),
 		std::move(invalidations),
 		std::move(text_edit_effects),
+		std::move(text_edit_records),
 	};
 }
 

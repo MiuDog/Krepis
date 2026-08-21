@@ -15,6 +15,7 @@ using krepis::InvalidationStage;
 using krepis::ObjectId;
 using krepis::ObjectRecord;
 using krepis::ParagraphRecord;
+using krepis::TextEditMergePolicy;
 using krepis::Transaction;
 using krepis::make_intrusive;
 using krepis::shutdown_default_reclamation_queue;
@@ -136,7 +137,13 @@ void test_range_replace_uses_grapheme_boundaries_and_reports_effect() {
 	const auto base_revision = base.snapshot_id().content_revision;
 	Transaction transaction(base_revision);
 	// Grapheme 2..6 是 cafe + combining acute；不得以 byte offset 拆 combining mark。
-	transaction.replace_paragraph_range(make_block(1), 2, 6, "X");
+	transaction.replace_paragraph_range(
+		make_block(1),
+		2,
+		6,
+		"X",
+		TextEditMergePolicy::continuous_typing
+	);
 	auto result = transaction.commit(base);
 	expect(result.is_ok(), "grapheme range replacement 可提交");
 	if (!result.is_ok()) return;
@@ -148,6 +155,15 @@ void test_range_replace_uses_grapheme_boundaries_and_reports_effect() {
 		expect(effect.replaced_grapheme_start == 2 && effect.replaced_grapheme_end == 6 &&
 		           effect.inserted_grapheme_count == 1,
 		       "effect 保存舊 range 與新 grapheme 數");
+	}
+	expect(result.value().text_edit_records.size() == 1,
+	       "commit 回傳一筆 typed undo record");
+	if (!result.value().text_edit_records.empty()) {
+		const auto& record = result.value().text_edit_records.front();
+		expect(record.removed_utf8 == "cafe\xCC\x81" && record.inserted_utf8 == "X",
+		       "undo record 保存完整 grapheme range 的舊值與新值");
+		expect(record.merge_policy == TextEditMergePolicy::continuous_typing,
+		       "typed command 的 merge policy 原樣進入 CommitResult");
 	}
 
 	Transaction out_of_range(base_revision);

@@ -80,5 +80,8 @@ add_test(NAME krepis.editing COMMAND krepis_editing_test)
 krepis_add_test(krepis_editing_session_test editing_session_test.cpp)
 add_test(NAME krepis.editing_session COMMAND krepis_editing_session_test)
 
+krepis_add_test(krepis_undo_test undo_test.cpp)
+add_test(NAME krepis.undo COMMAND krepis_undo_test)
+
 krepis_add_test(krepis_layout_invalidation_test layout_invalidation_test.cpp)
 add_test(NAME krepis.layout_invalidation COMMAND krepis_layout_invalidation_test)

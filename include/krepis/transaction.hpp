@@ -28,10 +28,23 @@ struct LayoutInvalidation {
 	InvalidationStage stage = InvalidationStage::shaping;
 };
 
+enum class TextEditMergePolicy : std::uint8_t {
+	never,
+	continuous_typing,
+};
+
+struct ParagraphTextEditRecord {
+	ParagraphTextEditEffect effect;
+	std::string removed_utf8;
+	std::string inserted_utf8;
+	TextEditMergePolicy merge_policy = TextEditMergePolicy::never;
+};
+
 struct CommitResult {
 	DocumentRevision revision;
 	std::vector<LayoutInvalidation> invalidations;
 	std::vector<ParagraphTextEditEffect> text_edit_effects;
+	std::vector<ParagraphTextEditRecord> text_edit_records;
 };
 
 class Transaction {
@@ -43,7 +56,8 @@ public:
 		BlockId block,
 		std::size_t grapheme_start,
 		std::size_t grapheme_end,
-		std::string utf8
+		std::string utf8,
+		TextEditMergePolicy merge_policy = TextEditMergePolicy::never
 	);
 
 	[[nodiscard]] Result<CommitResult> commit(const DocumentRevision& base) const;
@@ -55,6 +69,7 @@ private:
 		std::size_t grapheme_end;
 		bool whole_paragraph;
 		std::string utf8;
+		TextEditMergePolicy merge_policy;
 	};
 
 	std::uint64_t base_content_revision_;

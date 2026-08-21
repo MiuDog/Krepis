@@ -49,6 +49,7 @@ target_sources(krepis PRIVATE
     src/paragraph_record.cpp
     src/reclamation.cpp
     src/transaction.cpp
+    src/undo.cpp
     src/text_analysis.cpp
     src/text_layout.cpp
     src/text_shaper.cpp

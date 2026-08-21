@@ -118,7 +118,7 @@ void test_d15_replace_rebases_anchor_and_block_delete_cancels() {
 	       "D15 composition 位於 replacement content 後");
 
 	auto deleted = accepted.value().revision.with_deleted_object(block(1));
-	CommitResult deletion{std::move(deleted), {}, {}};
+	CommitResult deletion{std::move(deleted), {}, {}, {}};
 	expect(session.rebase_composition(deletion).is_ok(), "Block delete rebase 本身成功");
 	expect(!session.composition().has_value(), "target Block 被刪除時取消 composition");
 }
