@@ -57,6 +57,14 @@ add_test(NAME krepis.utf8 COMMAND krepis_utf8_test)
 krepis_add_test(krepis_text_analysis_test text_analysis_test.cpp)
 add_test(NAME krepis.text_analysis COMMAND krepis_text_analysis_test)
 
+krepis_add_test(krepis_text_shaper_test text_shaper_test.cpp)
+target_compile_definitions(krepis_text_shaper_test PRIVATE
+    KREPIS_TEST_LATIN_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Roboto-Regular.ttf"
+    KREPIS_TEST_HAN_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/SourceHanSans-Regular_subset.otf"
+    KREPIS_TEST_ARABIC_FONT="${harfbuzz_SOURCE_DIR}/test/subset/data/fonts/Amiri-Regular.ttf"
+)
+add_test(NAME krepis.text_shaper COMMAND krepis_text_shaper_test)
+
 krepis_add_test(krepis_transaction_test transaction_test.cpp)
 add_test(NAME krepis.transaction COMMAND krepis_transaction_test)
 

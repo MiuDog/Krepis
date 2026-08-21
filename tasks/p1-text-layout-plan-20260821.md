@@ -3,7 +3,8 @@
 ## 狀態
 
 **已由 P1 主計畫核准，進行中（2026-08-21）**。依賴／canonical UTF-8 與 2A Unicode analysis
-已完成；目前進入 2B fallback／shaping。本計畫只細化主計畫第 2 階段，不擴張 In／Out，
+與 2B fallback／shaping 已完成；目前進入 2C line layout／cache benchmark。本計畫只細化主計畫
+第 2 階段，不擴張 In／Out，
 也沒有新增人工決策。
 
 ## 目標
@@ -137,13 +138,20 @@ executable 亦使用正式 target 後成功執行。
 
 ### 3. Fallback 與 shaping
 
-**狀態：進行中。**
+**狀態：✅ 完成（2026-08-21）。**
 
 - 測試使用 repository fixture fonts，不依賴執行機器碰巧安裝的字型。
 - 先測單字型、CJK fallback、combining sequence、RTL、缺字 fail-closed、cluster 回映。
 - 驗收：沒有平台 handle、沒有 `.notdef` 靜默輸出、同輸入同 font bytes 得到穩定值結果。
 
+完成證據：測試固定使用已 pin 的 HarfBuzz source tree 內 Roboto、Source Han Sans 與 Amiri fixture，
+不讀系統安裝字型。具體例子 `A倅` 先讓 Roboto 接受 `A`，再因缺 U+5005 而選第二候選 Source Han；
+emoji U+1F984 在所有候選都缺字時回 `missing_glyph` 與 byte offset 1，不輸出 `.notdef`。同一
+font-set revision 重用候選／face coverage cache，revision 遞增後兩者都強制清除。
+
 ### 4. Line layout 與 cache benchmark
+
+**狀態：進行中。**
 
 - 先完成不帶 cache 的正確路徑，再加入 dependency-keyed LRU。
 - 量測 cache 候選容量與 TXT-5 同步路徑 p99；偏離建議值時記錄額外測試。
