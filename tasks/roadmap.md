@@ -57,7 +57,17 @@ authority 是**已知可解的工作量**，不是未知。先做它意味著數
 - 不做其他任何事
 
 **刻意不做**：平移／縮放、z-order、群組、連接線、多種節點型別、持久化、authority、
-identity、權限、ink、多平台。
+identity、權限、Ink 功能整合、多平台。每個 Block 可保留 `InkOverlay` 能力，既有 Ink 資料模型也
+保留，但手寫輸入、擦除、lasso 與 Ink undo 不屬於 P1 驗收，不得成為 P1 blocker。
+
+**目前進度（2026-08-21）**：`ParagraphRecord`、合法 UTF-8 邊界、單層原子 Transaction、一次
+revision 發布、typed layout invalidation 與 50,000 Block 局部 COW 更新已實作。仍未完成的是正式
+shaping／line breaking、composition、selection／undo、Spatial layout、display list encoder、C ABI 與
+Flutter／Notist 垂直整合；因此 P1 尚未關閉。
+
+**新發現的 P1 blocker（2026-08-21）**：預設 FlowSequence 連續尾插 5,000 個 Block 時可耗盡相鄰
+LeafKey 間距並觸發 `leaf_key_midpoint` assertion。這不是本次 transaction／invalidation 的回歸，
+但證明 `LAY-0002` 尚未決定的 relabel window 已是可重現缺口；P1 大文件驗收前必須實作並測試。
 
 #### 驗收條件（全部可機器判定）
 
@@ -102,17 +112,18 @@ Race detector 若在主要 MSVC 工具鏈不可用，必須增加具備相應能
 #### LAY-0002 D17 的強制閘門：目前狀態
 
 D17 因偏離原建議（未採 `std::shared_ptr`）而升級了七項強制閘門。
-基礎實作已完成，**四項達成**（含第 6 項），其餘在 P1 結束前必須補齊：
+截至 2026-08-18，七項已全部關閉；Gate 5 有 ASan／TSan 與第二工具鏈證據，Gate 7 已完成人工
+逐行審查並接受 12/12 項目：
 
 | # | 閘門 | 狀態 |
 |---|---|---|
 | 1 | `IntrusivePtr` copy／move／self-assignment／跨型別轉換的精確 retain／release 測試 | ✅ `tests/intrusive_ptr_test.cpp` |
 | 2 | 多執行緒隨機複製／釋放；drain 後每個 node 恰好銷毀一次 | ✅ 8 執行緒 × 2000 次 |
-| 3 | 舊 snapshot 背景走訪與新 revision 連續發布並行時，舊內容 hash 保持不變 | ❌ **需先有 FlowSequence 與 snapshot 發布** |
-| 4 | 最後 reference 於 UI 執行緒釋放時，destructor 在 reclamation worker 執行 | ⚠️ **部分**：延後銷毀已驗證，但背景 worker 尚未實作，目前由測試手動 `drain()` |
-| 5 | AddressSanitizer 與 race detector／第二工具鏈 | ❌ **未做**。MSVC 無可假定的 ThreadSanitizer，不得以「本機沒報錯」代替競態證據 |
+| 3 | 舊 snapshot 背景走訪與新 revision 連續發布並行時，舊內容 hash 保持不變 | ✅ snapshot 發布與並行壓力測試通過 |
+| 4 | 最後 reference 於 UI 執行緒釋放時，destructor 在 reclamation worker 執行 | ✅ reclamation worker、drain 與 shutdown path 已驗證 |
+| 5 | AddressSanitizer 與 race detector／第二工具鏈 | ✅ WSL GCC 與 GitHub Clang ASan／TSan 通過 |
 | 6 | 與 `std::shared_ptr` 基準比較 | ✅ **Spike 4 完成（2026-08-17）**。IntrusivePtr 無效能優勢；偏離理由已改為架構需求（延後銷毀），不再以效能為正當性 |
-| 7 | 人工逐行審查所有 memory order、owning edge、borrowed pointer lifetime 與 shutdown drain path | ❌ **需人類**。此項不可由 AI 自我核可 |
+| 7 | 人工逐行審查所有 memory order、owning edge、borrowed pointer lifetime 與 shutdown drain path | ✅ 人工審查 12/12 接受（2026-08-18） |
 
 **第 6 項已完成但結果翻轉**：benchmark 證明效能不是理由。D17 已改寫偏離理由為
 「延後銷毀是架構需求，shared_ptr 無法在保留 make_shared 合併配置的前提下提供 custom deleter」。
@@ -127,6 +138,13 @@ dogfood 是整個計畫的驗證機制——抽象設計的錯誤只有在被實
 
 **此格式會在 P4 被丟棄，必須寫進決策**，否則會被誤當成正式格式沿用。
 
+2026-08-21 裁決 **Q1：A**：`ParagraphRecord` 與原子 `Transaction` 完成後仍不立即插入 codec；先把
+Notist 的 Flow 文字、游標與 IME 做到可實際使用，**隨即加入本階段的可丟棄持久化，再繼續完整
+Spatial 與其餘 P1 工作**。這讓 dogfood 提前開始，同時避免在第一條文字路徑尚未成立時替不穩定
+模型寫 codec。若此階段納入 Ink dogfood，格式必須同時保存 `InkStroke` 與 `BrushStyle`；否則不得
+宣稱 Ink 已可存檔。完整順序與驗收見
+[`p1-vertical-slice-plan-20260821.md`](p1-vertical-slice-plan-20260821.md)。
+
 ### P2 —— 文件模型完整化
 
 多種 block 型別、stable ID、codec、schema 版本與遷移。
@@ -134,6 +152,9 @@ dogfood 是整個計畫的驗證機制——抽象設計的錯誤只有在被實
 ### P3 —— ink layer
 
 獨立圖層、快速路徑、anchor 到文件位置、reflow 時的行為。
+
+**目前進度**：取樣點、`BrushStyle`、`InkStroke` 與擦除範圍的底層資料模型已提早實作；outline
+單一實作、受限 lasso、記憶體預算 undo、Block anchor 整合與 Apple Pencil fixture 尚未完成。
 
 #### 相依風險：筆在 iPad 上，開發在 Windows
 

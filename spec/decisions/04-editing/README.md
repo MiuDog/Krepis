@@ -8,25 +8,16 @@ selection 模型、typed transaction、undo／redo。
 
 **「怎麼改文件、以及怎麼還原」的決策。** 文件的形狀屬於 `01-document`。
 
-## 待決問題
+## 決策
 
-- **selection 有幾種型別**：文字是一維區間（有順序、有「之間」），空間節點是集合
-  （無順序），ink 是幾何套索。**每多一種，所有操作都要對它定義行為**——型別數量是成本的乘數，
-  第一版應盡量少，且必須寫明擴充的條件。
-- **transaction 的原子邊界**：跨型別的操作（把文字移到畫布 ＝ 文件刪除 ＋ 空間新增）
-  必須是一個不可分割的原子，否則 undo 一半會產生資料兩邊都不在的狀態。
-- **undo 的合併規則**：文字會合併（連打十個字是一次 undo），空間物件操作不合併，
-  一筆手寫是一個單位但內含數千取樣點。三者共存於同一序列。
-- **組字中的文字不進 undo stack**；一次確定才是一個 undo 單位。**此規則必須在模型層表達**，
-  不得依賴外殼自律（違反 `FND-0001` 第 6 條）。
+- [`EDT-0001`](EDT-0001-selection-transaction-and-undo.md)：兩種主要 selection、單層原子
+  Transaction、command-specific merge 與全域 undo。
 
-## 已定方向（待正式 ADR 時展開）
+## 尚待量測
 
 - **文字 undo 合併採固定時間窗**：連續打字若在閾值時間內，合併為同一個 undo 步。
   閾值為 benchmark 參數，初始值參考 VS Code（約 1 秒打字暫停）。IME 一次確定已由
   [`DOC-0001` D10](../01-document/DOC-0001-object-tree-stable-id-reference-and-composition.md)
   定為一個 undo 單位，此時間窗只影響確定後的連續非 IME 打字。
 
-## 決策
-
-（尚無）
+時間窗只影響已確定的一般文字輸入；實際 EDT-5 閾值待真實 workload benchmark。

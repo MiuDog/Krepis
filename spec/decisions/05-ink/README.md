@@ -23,7 +23,7 @@ ink 資料模型、圖層語意、anchor 到文件位置。**不含繪製**—�
 - **品質門檻是意圖捕捉，不是繪圖產品。** 求快不求準，不需要平台專屬的低延遲預測 API，
   不需要筆鋒漸細與向量重編輯。此前提若改變，成本會回到繪圖產品的量級。
 
-## 已定方向（人類決定，待正式 ADR 時展開）
+## 已定方向（人類決定）
 
 ### Ink 越界行為（2026-08-17 人類決定）
 
@@ -39,14 +39,29 @@ ink 資料模型、圖層語意、anchor 到文件位置。**不含繪製**—�
 - reflow 後筆跡隨所屬 Block 頂部移動（anchor 是 Block 級），Block 內座標不變。
   這意味著 reflow 可能造成筆跡與文字內容錯位——這是已接受的取捨，不自動修復。
 
-### 待決問題
+### 取樣、快速路徑與工具語意（2026-08-17～2026-08-21 人類決定）
 
-- **取樣點的儲存格式**：一筆可含數百至數千點，每點帶 `x, y, pressure, tilt, timestamp`。
-  一頁可到數十萬點——不能用通用序列化。
-- **anchor 的內部表達**：中心落點歸屬已定，但邏輯錨點的內部型別未定。
-- **快速路徑與模型的關係**：繪製中的筆跡尚未進模型，抬筆後才提交。這個「兩個真相並存」的
-  視窗必須有明確契約。
+- 一個 sample 使用 9 bytes：正規化 `x`、相對 Block 頂部的 `y`、pressure、tilt 與時間差。
+- tilt azimuth 使用 `uint8`；只有真實 Apple Pencil fixture 顯示可見角度階梯時，才能重開為
+  `uint16`／10 bytes sample。
+- Flutter 外殼持有尚未提交的 in-progress stroke；pen-up 時才以一個 transaction 提交到 Krepis。
+- 繪製中與提交後的筆畫外框都必須呼叫 C++ 的同一份 outline 實作。不得在 Flutter 複製近似版。
+  每幀 FFI 成本是強制 benchmark；超出 frame budget 時重開方案，不以雙實作規避。
+- Ink lasso 是受限 selection：第一版只允許選取、移動與刪除整筆，不取得文字 caret／range 語意，
+  不擴張 EDT-1 的兩種主要 selection。
+- Ink undo 使用記憶體預算，不使用固定筆數；初始上限為 256 MiB，超過時淘汰最舊交易。
 
-## 決策
+### 階段邊界（2026-08-21 人類決定）
 
-（尚無）
+- P1 保留每個 Block 可擁有 `InkOverlay` 的模型能力與既有 Ink 資料型別，但不把手寫輸入、擦除、
+  lasso 或 Ink undo 納入 P1 驗收。
+- Ink 整合留在 P3；Apple Pencil 手感與延遲仍在 iPad 平台路徑驗收。
+- P1.5 codec 只有在最小 `ParagraphRecord` 與原子 `Transaction` 完成後才實作；若 dogfood 納入
+  手寫，格式必須保存 `InkStroke` 與 `BrushStyle`，並明文標示之後會被丟棄。
+
+## 尚未決定／尚待量測
+
+- anchor 的正式內部型別仍須在 Paragraph／Block schema 定案後寫入 ADR。
+- C++ outline 的每幀 FFI 成本尚未量測。
+- 256 MiB undo 預算的交易計費、共享資料去重與淘汰行為尚未實作及驗證。
+- tilt azimuth 精度尚未以真實 Apple Pencil fixture 驗證。

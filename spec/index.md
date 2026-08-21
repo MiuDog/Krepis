@@ -79,4 +79,7 @@ decisions/<NN-能力>/<代碼>-NNNN-kebab-case-主題.md
 | [DOC-0001](decisions/01-document/DOC-0001-object-tree-stable-id-reference-and-composition.md) | Accepted | 物件樹、stable ID、即時引用與組字疊加層 |
 | [DOC-0002](decisions/01-document/DOC-0002-object-id-representation-and-generation.md) | Accepted | ObjectId 的位元表示、強型別包裝、生成與正規編碼 |
 | [LAY-0001](decisions/02-layout/LAY-0001-sync-background-split-and-frame-budget.md) | Accepted | 同步／背景的分工線與一幀預算；P0 實測通過 |
-| [LAY-0002](decisions/02-layout/LAY-0002-invalidation-offset-and-viewport-index.md) | **Proposed**（D1–D20 已接受） | 失效傳播、偏移與可見範圍索引；分塊參數已定案，失效傳播規則待決。**D17 七道強制閘門已全部通過（2026-08-18）** |
+| [LAY-0002](decisions/02-layout/LAY-0002-invalidation-offset-and-viewport-index.md) | Accepted | 失效傳播、偏移與可見範圍索引；D17 七道閘門與 D21 完整失效規則已通過 |
+| [TXT-0001](decisions/03-text/TXT-0001-text-shaping-fallback-composition-and-cache.md) | Accepted | 跨平台 shaping、核心 fallback、URL／路徑禁斷、composition overlay 與 cache key |
+| [EDT-0001](decisions/04-editing/EDT-0001-selection-transaction-and-undo.md) | Accepted | 兩種主要 selection、單層原子 Transaction、command merge 與全域 undo |
+| [BND-0001](decisions/07-binding/BND-0001-display-list-buffer-command-and-version.md) | Accepted | Display list binary format、雙緩衝、同步 command、版本與錯誤拒絕策略 |

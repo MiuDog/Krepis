@@ -139,21 +139,31 @@ BrushStyle {
 - **ATH-2＝A 的檔案格式必須能存 InkStroke 與 BrushStyle**：
   即使是「可丟棄的簡陋格式」，也得涵蓋手寫，否則 dogfood 無法驗證手寫路徑。
 
-### 仍需裁決（由 INK 回答衍生）
+### INK-5～INK-8 裁決（2026-08-21 人類接受建議）
 
-| 編號 | 問題 |
-|---|---|
-| INK-5 | 繪製中筆跡的外框函式怎麼避免兩份實作？（FFI 共用／接受跳變／改 INK-3） |
-| INK-6 | ink selection 採「受限 selection」還是重開 EDT-1？ |
-| INK-7 | tilt azimuth 精度 1.4°（uint8）夠嗎，還是要 uint16？ |
-| INK-8 | undo 改用記憶體預算是否接受？預算值多少？ |
+| 編號 | 裁決 | 必須保留的驗證與重開條件 |
+|---|---|---|
+| INK-5 | **A：繪製中與提交後都使用 C++ 的唯一 outline 實作** | 每幀 FFI 路徑必須量測；若 outline 呼叫使同步路徑超過 frame budget，重開本題，不得在 Flutter 複製第二份幾何演算法。 |
+| INK-6 | **受限 Ink selection** | 第一版只允許選取、移動與刪除整筆 InkStroke，不加入文字 caret／range 語意，也不重開 EDT-1 的兩種主要 selection。 |
+| INK-7 | **tilt azimuth 使用 `uint8`，維持 9 bytes/sample** | 以真實 Apple Pencil fixture 驗證；若出現可見的角度階梯，再重開並比較 `uint16` 的 10 bytes/sample 格式。 |
+| INK-8 | **undo 採記憶體預算，初始上限 256 MiB** | 依交易實際持有的 Ink 資料計費，超過預算時淘汰最舊交易；必須測試單筆超大交易、共享資料去重與淘汰邊界。 |
+
+### 階段範圍與實作時序裁決（2026-08-21 人類接受建議）
+
+- **P1 不把 Ink 整合列入驗收條件。** 每個 Block 可保留 `InkOverlay` 能力，已完成的 Ink 資料模型也
+  保留，但手寫輸入、擦除、lasso 與 Ink undo 不得成為 P1 垂直切片的 blocker。
+- **P1.5 的可丟棄格式現在確定方向，但延後到最小 `ParagraphRecord` 與原子 `Transaction` 完成後
+  才實作。** 這不推翻 ATH-2＝A；目的是避免在正式內容模型不存在時先做一次必然重寫的 codec。
+- P1.5 格式仍須明文標記會被 authority 格式取代；若 P1.5 dogfood 納入手寫，格式也必須涵蓋
+  `InkStroke` 與 `BrushStyle`。
 
 ---
 
 ## 這份文件是什麼
 
-`03-text`、`04-editing`、`05-ink`、`06-authority`、`07-binding` 五個能力目前**都還沒有任何決策**，
-只有 README 的範圍界定。本檔把散落的待決問題整理成**可逐條裁決**的形式，作為寫 ADR 的輸入。
+`TXT-0001`、`EDT-0001` 與 `BND-0001` 已於 2026-08-21 正式化；Ink 依人類主導例外保存在
+`05-ink/README.md`，authority 的可丟棄格式仍待實作時建立 ADR。本檔保存原始裁決與推導過程；
+不能把「已裁決」誤寫成「已實作」。
 
 回答方式：依編號回覆選項字母即可（例：`TXT-2: B`）。
 
