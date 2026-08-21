@@ -31,10 +31,12 @@ endif()
 
 add_library(krepis)
 add_library(krepis::krepis ALIAS krepis)
+set_target_properties(krepis PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_sources(krepis PRIVATE
     src/arena.cpp
     src/document_revision.cpp
+    src/display_list.cpp
     src/dogfood_file.cpp
     src/embed_record.cpp
     src/editing.cpp
@@ -72,6 +74,19 @@ target_link_libraries(krepis
     PUBLIC Threads::Threads
     PRIVATE harfbuzz krepis_text_unibreak krepis_text_sheenbidi
 )
+
+add_library(krepis_c SHARED src/krepis_c.cpp)
+target_link_libraries(krepis_c PRIVATE krepis::krepis)
+target_include_directories(krepis_c PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_compile_definitions(krepis_c PRIVATE KREPIS_BUILD_DLL)
+if(MSVC)
+    target_compile_options(krepis_c PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(krepis_c PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 
 if(MSVC)
     # /W4 為警告基線；/permissive- 關閉 MSVC 的寬鬆一致性模式，避免寫出不可攜的程式碼。

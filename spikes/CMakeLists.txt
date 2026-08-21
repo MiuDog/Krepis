@@ -141,6 +141,18 @@ if(MSVC)
     target_compile_options(bench_text_layout_cache PRIVATE /utf-8 /W4 /permissive-)
 endif()
 
+# Benchmark: display-list encode + publish validation + consumer validation（BND-0001 BND-5）
+add_executable(bench_display_list
+    bench_display_list/bench_display_list.cpp
+)
+target_link_libraries(bench_display_list PRIVATE krepis::krepis)
+target_compile_features(bench_display_list PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(bench_display_list PRIVATE /utf-8 /W4 /permissive-)
+else()
+    target_compile_options(bench_display_list PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 # Spike 5: 跨平台 text shaping（重用正式 HarfBuzz target，依 FND-0003）
 #
 # 依賴已由正式文字管線載入；此開關只控制列印型 spike executable。

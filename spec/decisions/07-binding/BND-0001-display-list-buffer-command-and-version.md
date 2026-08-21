@@ -58,14 +58,43 @@ offset 與 count，不含 native pointer、`size_t`、C++ enum layout 或平台 
 Decoder 時間為 `O(B + C)`，`B` 是 byte size、`C` 是 command count；額外空間第一版為 `O(1)`
 加 renderer 自身資料，不需要複製整段 buffer。
 
-## D2：核心擁有雙緩衝，外殼只借用 front span
+## D2：核心擁有雙緩衝，外殼以顯式 lease 借用 front span
 
 核心在 back buffer 完整 encode 並自我驗證後，才交換 front／back 並增加 frame token。失敗時 front
-與 token 都不變，外殼可以繼續顯示上一個有效 frame。Span 有效到同一 display-list handle 下一次
-成功 publish；外殼不得保存 pointer 跨過該邊界，也不得釋放或修改 buffer。
+與 token 都不變，外殼可以繼續顯示上一個有效 frame。Span 在對應 lease 明確 release 前有效；外殼
+不得直接釋放或修改 buffer。兩個 slot 都仍被 lease 時，下一次 `begin_frame` 回 `invalid_state`，不得
+覆寫舊 pointer。
+
+這裡修正本文件原先「下一次 publish 即失效」的較弱文字，以符合 `FND-0002 D3` 已接受的顯式
+release 契約。代價是外殼漏 release 會造成 backpressure；配套測試比原建議更嚴格：同時持有兩幀、
+確認第三幀被拒絕、釋放後恢復，並要求 acquire count 恰等於 release count。
 
 Buffer 容量可保留並成長，縮減策略由 BND-5 benchmark 決定。外殼不能提供容量或要求核心在容量
 不足時截斷命令。
+
+## D5：P1 opcode 與 payload
+
+| Opcode | 值 | Payload | 驗證 |
+|---|---:|---|---|
+| `DrawRect` | 1 | `float32 x,y,w,h`、`u32 RGBA` | finite、非負尺寸；command 32 bytes |
+| `DrawGlyphRun` | 2 | font ID、26.6 baseline/font size、color、direction、glyph array | 非空、合法方向；每 glyph 固定 24 bytes |
+| `PushClip` / `PopClip` | 3 / 4 | rect / 無 | clip stack 不可 underflow，frame 結束必須歸零 |
+| `PushTransform` / `PopTransform` | 5 / 6 | 六個 affine `float32` / 無 | finite；transform stack 必須平衡 |
+
+`DrawGlyphRun` 的 glyph entry 是 `u32 glyph_id`、五個 26.6／offset `i32`（其中 cluster offset 為
+`u32`），不傳 native font pointer。P1 C ABI 的 `KrepisGlyph` 固定 24 bytes，並以 C 與 C++ 編譯測試
+共同鎖定。
+
+Release benchmark（WSL，2026-08-21）以 4,000 幀、每幀 200 個 20-glyph runs，加背景與 clip，
+同時計入 encode、publish 自驗、consumer 再驗與 lease：
+
+| commands/frame | bytes/frame | 兩 slot retained | p50 | p99 | max |
+|---:|---:|---:|---:|---:|---:|
+| 203 | 104,096 | 266,624 | 22.051 µs | 44.477 µs | 193.286 µs |
+
+p99 只有 3 ms gate 的 1.6%，同步通道不需重開。4,200 acquire／release 全數對帳。P1 正常 workload
+保留兩個高水位 buffer，不逐幀縮減；異常超大 frame 的縮減門檻仍需另加 spike，不能從正常 workload
+外推。
 
 ## D3：Command 通道同步，p99 超標即重開
 
@@ -107,5 +136,4 @@ command 完全合法，也不能先畫第一個再報錯，必須保留上一幀
 
 ## 尚未決定
 
-- 最終 opcode 表、各 payload schema 與 BND-5 封送成本；在 renderer command 集合定案後補充。
-- Buffer 保留容量與縮減門檻；由峰值記憶體及 frame workload 量測。
+- 異常超大 frame 後的 buffer 縮減門檻；需加入 peak→steady workload 後定案。

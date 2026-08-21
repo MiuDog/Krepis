@@ -42,6 +42,19 @@ add_test(NAME krepis.document_revision COMMAND krepis_document_revision_test)
 krepis_add_test(krepis_dogfood_file_test dogfood_file_test.cpp)
 add_test(NAME krepis.dogfood_file COMMAND krepis_dogfood_file_test)
 
+krepis_add_test(krepis_display_list_test display_list_test.cpp)
+add_test(NAME krepis.display_list COMMAND krepis_display_list_test)
+
+add_executable(krepis_c_abi_test c_abi_test.c)
+target_link_libraries(krepis_c_abi_test PRIVATE krepis_c)
+target_include_directories(krepis_c_abi_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
+if(MSVC)
+    target_compile_options(krepis_c_abi_test PRIVATE /W4)
+else()
+    target_compile_options(krepis_c_abi_test PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME krepis.c_abi COMMAND krepis_c_abi_test)
+
 krepis_add_test(krepis_location_index_test location_index_test.cpp)
 add_test(NAME krepis.location_index COMMAND krepis_location_index_test)
 
