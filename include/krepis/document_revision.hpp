@@ -17,6 +17,7 @@
 #include "krepis/location_index.hpp"
 #include "krepis/object_id.hpp"
 #include "krepis/object_store.hpp"
+#include "krepis/reference_index.hpp"
 #include "krepis/snapshot_id.hpp"
 #include "krepis/spatial_container.hpp"
 
@@ -73,6 +74,7 @@ public:
     [[nodiscard]] const IdDirectory& directory() const noexcept { return *directory_; }
     [[nodiscard]] const ObjectStoreSnapshot& store() const noexcept { return store_; }
     [[nodiscard]] const LocationIndex& locations() const noexcept { return locations_; }
+	[[nodiscard]] const ReferenceIndex& references() const noexcept { return *references_; }
 
     // 取得某個 Container 的 FlowSequence。不存在時回傳 nullptr。
     [[nodiscard]] const FlowSequence* flow_root(ContainerId container) const;
@@ -122,6 +124,13 @@ public:
 		ContainerId container,
 		SpatialContainer spatial
 	) const;
+	// 移出 Flow ownership，並在同一 revision 修復所有引用該來源的 range endpoints。
+	// delete_record 為 true 時同時把被移除 Block 寫成 tombstone。
+	[[nodiscard]] Result<DocumentRevision> with_flow_block_removal(
+		ContainerId container,
+		BlockId block,
+		bool delete_record
+	) const;
 
     // D22：只套用 typed edit 明列的 locator 更新。來源 root 不符時整筆拒絕。
     [[nodiscard]] Result<DocumentRevision> with_flow_insert(
@@ -143,7 +152,8 @@ private:
     DocumentRevision(SnapshotId snapshot_id, IntrusivePtr<const IdDirectory> directory,
                      ObjectStoreSnapshot store, LocationIndex locations,
                      std::vector<FlowRootEntry> flow_roots,
-	                 std::vector<SpatialRootEntry> spatial_roots) noexcept;
+	                 std::vector<SpatialRootEntry> spatial_roots,
+	                 IntrusivePtr<const ReferenceIndex> references) noexcept;
 
     [[nodiscard]] SnapshotId next_content_revision() const noexcept;
 
@@ -155,6 +165,7 @@ private:
     // 若容器數成長到需要索引，應以量測驅動而非預先最佳化。
     std::vector<FlowRootEntry> flow_roots_;
 	std::vector<SpatialRootEntry> spatial_roots_;
+	IntrusivePtr<const ReferenceIndex> references_;
 };
 
 }  // namespace krepis

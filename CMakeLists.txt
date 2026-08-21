@@ -36,6 +36,7 @@ target_sources(krepis PRIVATE
     src/arena.cpp
     src/document_revision.cpp
     src/dogfood_file.cpp
+    src/embed_record.cpp
     src/editing.cpp
     src/editing_session.cpp
     src/flow_layout_index.cpp
@@ -49,6 +50,8 @@ target_sources(krepis PRIVATE
     src/object_id.cpp
     src/paragraph_record.cpp
     src/reclamation.cpp
+    src/reference_resolver.cpp
+    src/reference_index.cpp
     src/spatial_container.cpp
     src/transaction.cpp
     src/undo.cpp

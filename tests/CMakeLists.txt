@@ -91,3 +91,6 @@ add_test(NAME krepis.layout_invalidation COMMAND krepis_layout_invalidation_test
 
 krepis_add_test(krepis_spatial_container_test spatial_container_test.cpp)
 add_test(NAME krepis.spatial_container COMMAND krepis_spatial_container_test)
+
+krepis_add_test(krepis_reference_resolver_test reference_resolver_test.cpp)
+add_test(NAME krepis.reference_resolver COMMAND krepis_reference_resolver_test)

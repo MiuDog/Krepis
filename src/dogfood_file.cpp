@@ -1,10 +1,12 @@
 #include "krepis/dogfood_file.hpp"
 
+#include "krepis/embed_record.hpp"
 #include "krepis/object_slot.hpp"
 #include "krepis/paragraph_record.hpp"
 
 #include <array>
 #include <algorithm>
+#include <bit>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -31,9 +33,11 @@ constexpr std::array<std::byte, 8> magic{
 	std::byte{'O'}, std::byte{'G'}, std::byte{'0'}, std::byte{'1'},
 };
 constexpr std::uint16_t format_major = 1;
-constexpr std::uint16_t format_minor = 0;
+constexpr std::uint16_t format_minor = 1;
 constexpr std::uint32_t disposable_flag = 1;
 constexpr std::uint32_t paragraph_kind = 1;
+constexpr std::uint32_t flow_range_embed_kind = 2;
+constexpr std::uint32_t spatial_viewport_embed_kind = 3;
 constexpr std::uint64_t maximum_objects = 10'000'000;
 constexpr std::uint64_t maximum_containers = 1'000'000;
 constexpr std::uint64_t maximum_text_bytes = 64 * 1024 * 1024;
@@ -51,6 +55,11 @@ void append_id(std::vector<std::byte>& out, const ObjectId& id) {
 	std::array<std::byte, ObjectId::encoded_size> encoded{};
 	encode_object_id(id, encoded);
 	out.insert(out.end(), encoded.begin(), encoded.end());
+}
+
+void append_double(std::vector<std::byte>& out, double value) {
+	static_assert(std::numeric_limits<double>::is_iec559 && sizeof(double) == sizeof(std::uint64_t));
+	append_little(out, std::bit_cast<std::uint64_t>(value));
 }
 
 class Reader {
@@ -76,6 +85,12 @@ public:
 		std::memcpy(encoded.data(), bytes_.data() + offset_, encoded.size());
 		offset_ += encoded.size();
 		return decode_object_id(encoded);
+	}
+
+	[[nodiscard]] Result<double> floating() {
+		auto bits = little<std::uint64_t>();
+		if (!bits.is_ok()) return bits.error();
+		return std::bit_cast<double>(bits.value());
 	}
 
 	[[nodiscard]] Result<std::string> text(std::uint64_t size) {
@@ -179,27 +194,29 @@ Result<void> atomic_replace(
 
 Result<std::vector<std::byte>> encode_dogfood_file(const DocumentRevision& revision) {
 	if (revision.directory().slot_count() > maximum_objects ||
-	    revision.container_count() > maximum_containers) {
+	    revision.container_count() > maximum_containers ||
+	    revision.spatial_container_count() > maximum_containers) {
 		return Error{ErrorCode::out_of_range, "dogfood document 超過格式數量上限"};
 	}
-	std::vector<std::pair<ObjectId, const ParagraphRecord*>> paragraphs;
-	paragraphs.reserve(revision.directory().slot_count());
+	std::vector<std::pair<ObjectId, IntrusivePtr<const ObjectRecord>>> records;
+	records.reserve(revision.directory().slot_count());
 	for (std::size_t index = 0; index < revision.directory().slot_count(); ++index) {
 		const auto slot = ObjectSlot{static_cast<std::uint32_t>(index)};
 		auto record = revision.store().get(slot);
 		if (record == nullptr) continue;
 		const auto* paragraph = dynamic_cast<const ParagraphRecord*>(record.get());
-		if (paragraph == nullptr) {
-			return Error{ErrorCode::unsupported, "dogfood format 只支援 ParagraphRecord"};
+		const auto* embed = dynamic_cast<const EmbedRecord*>(record.get());
+		if (paragraph == nullptr && embed == nullptr) {
+			return Error{ErrorCode::unsupported, "dogfood format 不支援此 ObjectRecord"};
 		}
-		if (paragraph->utf8().size() > maximum_text_bytes) {
+		if (paragraph != nullptr && paragraph->utf8().size() > maximum_text_bytes) {
 			return Error{ErrorCode::out_of_range, "dogfood Paragraph 超過長度上限"};
 		}
 		const auto id = revision.directory().id_for(slot);
 		if (id.is_nil()) {
 			return Error{ErrorCode::invalid_state, "visible record 沒有 stable ObjectId"};
 		}
-		paragraphs.emplace_back(id, paragraph);
+		records.emplace_back(id, std::move(record));
 	}
 
 	std::vector<std::byte> out;
@@ -208,13 +225,32 @@ Result<std::vector<std::byte>> encode_dogfood_file(const DocumentRevision& revis
 	append_little(out, format_major);
 	append_little(out, format_minor);
 	append_little(out, disposable_flag);
-	append_little(out, static_cast<std::uint64_t>(paragraphs.size()));
-	for (const auto& [id, paragraph] : paragraphs) {
-		append_little(out, paragraph_kind);
+	append_little(out, static_cast<std::uint64_t>(records.size()));
+	for (const auto& [id, record] : records) {
+		const auto* paragraph = dynamic_cast<const ParagraphRecord*>(record.get());
+		const auto* embed = dynamic_cast<const EmbedRecord*>(record.get());
+		append_little(out, paragraph != nullptr
+			? paragraph_kind
+			: std::holds_alternative<FlowRangeTarget>(embed->target())
+				? flow_range_embed_kind
+				: spatial_viewport_embed_kind);
 		append_id(out, id);
-		append_little(out, static_cast<std::uint64_t>(paragraph->utf8().size()));
-		const auto* begin = reinterpret_cast<const std::byte*>(paragraph->utf8().data());
-		out.insert(out.end(), begin, begin + paragraph->utf8().size());
+		if (paragraph != nullptr) {
+			append_little(out, static_cast<std::uint64_t>(paragraph->utf8().size()));
+			const auto* begin = reinterpret_cast<const std::byte*>(paragraph->utf8().data());
+			out.insert(out.end(), begin, begin + paragraph->utf8().size());
+		} else if (const auto* flow = std::get_if<FlowRangeTarget>(&embed->target())) {
+			append_id(out, flow->source_flow.raw());
+			append_id(out, flow->anchor_a.raw());
+			append_id(out, flow->anchor_b.raw());
+		} else {
+			const auto& spatial = std::get<SpatialViewportTarget>(embed->target());
+			append_id(out, spatial.source_spatial.raw());
+			append_double(out, spatial.viewport.x);
+			append_double(out, spatial.viewport.y);
+			append_double(out, spatial.viewport.width);
+			append_double(out, spatial.viewport.height);
+		}
 	}
 	append_little(out, static_cast<std::uint64_t>(revision.container_count()));
 	for (std::size_t i = 0; i < revision.container_count(); ++i) {
@@ -224,6 +260,25 @@ Result<std::vector<std::byte>> encode_dogfood_file(const DocumentRevision& revis
 		append_little(out, static_cast<std::uint64_t>(sequence->block_count()));
 		for (std::size_t rank = 0; rank < sequence->block_count(); ++rank) {
 			append_id(out, sequence->at(rank).raw());
+		}
+	}
+	append_little(out, static_cast<std::uint64_t>(revision.spatial_container_count()));
+	for (std::size_t i = 0; i < revision.spatial_container_count(); ++i) {
+		const auto container = revision.spatial_container_id_at(i);
+		const auto* spatial = revision.spatial_root(container);
+		append_id(out, container.raw());
+		append_little(out, static_cast<std::uint64_t>(spatial->placement_count()));
+		for (std::size_t index = 0; index < spatial->placement_count(); ++index) {
+			const auto& placement = spatial->placement_at(index);
+			append_little(out, placement.placement_key);
+			append_id(out, placement.child.raw());
+			append_double(out, placement.frame.x);
+			append_double(out, placement.frame.y);
+			append_double(out, placement.frame.width);
+			append_double(out, placement.frame.height);
+			append_double(out, placement.source_width);
+			append_double(out, placement.source_height);
+			append_double(out, placement.vertical_scroll);
 		}
 	}
 	if (out.size() > maximum_file_bytes) {
@@ -260,25 +315,70 @@ Result<DocumentRevision> decode_dogfood_file(std::span<const std::byte> bytes) {
 	for (std::uint64_t i = 0; i < object_count.value(); ++i) {
 		auto kind = reader.little<std::uint32_t>();
 		auto id = reader.id();
-		auto size = reader.little<std::uint64_t>();
-		if (!kind.is_ok() || !id.is_ok() || !size.is_ok()) {
+		if (!kind.is_ok() || !id.is_ok()) {
 			return Error{ErrorCode::corrupt_data, "dogfood object header 截斷"};
 		}
-		if (kind.value() != paragraph_kind || id.value().is_nil()) {
+		if (id.value().is_nil()) {
 			return Error{ErrorCode::corrupt_data, "dogfood object kind 或 ID 不合法"};
 		}
-		auto text = reader.text(size.value());
-		if (!text.is_ok()) return text.error();
-		auto paragraph = ParagraphRecord::create(
-			revision.snapshot_id().content_revision + 1,
-			std::move(text).take()
-		);
-		if (!paragraph.is_ok()) return paragraph.error();
 		const BlockId block{id.value()};
 		if (revision.record_for(block) != nullptr) {
 			return Error{ErrorCode::corrupt_data, "dogfood BlockId 重複"};
 		}
-		revision = revision.with_new_object(block, std::move(paragraph).take());
+		IntrusivePtr<const ObjectRecord> record;
+		if (kind.value() == paragraph_kind) {
+			auto size = reader.little<std::uint64_t>();
+			if (!size.is_ok()) return Error{ErrorCode::corrupt_data, "Paragraph 長度截斷"};
+			auto text = reader.text(size.value());
+			if (!text.is_ok()) return text.error();
+			auto paragraph = ParagraphRecord::create(
+				revision.snapshot_id().content_revision + 1,
+				std::move(text).take()
+			);
+			if (!paragraph.is_ok()) return paragraph.error();
+			record = std::move(paragraph).take();
+		} else if (kind.value() == flow_range_embed_kind) {
+			auto source = reader.id();
+			auto anchor_a = reader.id();
+			auto anchor_b = reader.id();
+			if (!source.is_ok() || !anchor_a.is_ok() || !anchor_b.is_ok()) {
+				return Error{ErrorCode::corrupt_data, "FlowRangeEmbed 截斷"};
+			}
+			auto embed = EmbedRecord::create(
+				revision.snapshot_id().content_revision + 1,
+				FlowRangeTarget{
+					ContainerId{source.value()},
+					BlockId{anchor_a.value()},
+					BlockId{anchor_b.value()},
+				}
+			);
+			if (!embed.is_ok()) return Error{ErrorCode::corrupt_data, "FlowRangeEmbed 不合法"};
+			record = std::move(embed).take();
+		} else if (kind.value() == spatial_viewport_embed_kind) {
+			auto source = reader.id();
+			auto x = reader.floating();
+			auto y = reader.floating();
+			auto width = reader.floating();
+			auto height = reader.floating();
+			if (!source.is_ok() || !x.is_ok() || !y.is_ok() ||
+			    !width.is_ok() || !height.is_ok()) {
+				return Error{ErrorCode::corrupt_data, "SpatialViewportEmbed 截斷"};
+			}
+			auto embed = EmbedRecord::create(
+				revision.snapshot_id().content_revision + 1,
+				SpatialViewportTarget{
+					ContainerId{source.value()},
+					RectD{x.value(), y.value(), width.value(), height.value()},
+				}
+			);
+			if (!embed.is_ok()) {
+				return Error{ErrorCode::corrupt_data, "SpatialViewportEmbed 不合法"};
+			}
+			record = std::move(embed).take();
+		} else {
+			return Error{ErrorCode::corrupt_data, "dogfood object kind 未知"};
+		}
+		revision = revision.with_new_object(block, std::move(record));
 	}
 	auto container_count = reader.little<std::uint64_t>();
 	if (!container_count.is_ok() || container_count.value() > maximum_containers) {
@@ -313,6 +413,57 @@ Result<DocumentRevision> decode_dogfood_file(std::span<const std::byte> bytes) {
 			sequence = sequence.insert(sequence.block_count(), block);
 		}
 		revision = revision.with_flow_root(container, std::move(sequence));
+	}
+	auto spatial_count = reader.little<std::uint64_t>();
+	if (!spatial_count.is_ok() || spatial_count.value() > maximum_containers) {
+		return Error{ErrorCode::corrupt_data, "dogfood spatial container count 不合法"};
+	}
+	for (std::uint64_t i = 0; i < spatial_count.value(); ++i) {
+		auto id = reader.id();
+		auto placement_count = reader.little<std::uint64_t>();
+		if (!id.is_ok() || !placement_count.is_ok() || id.value().is_nil() ||
+		    placement_count.value() > maximum_objects ||
+		    !seen_containers.insert(id.value()).second) {
+			return Error{ErrorCode::corrupt_data, "dogfood SpatialContainer header 不合法"};
+		}
+		std::vector<SpatialPlacement> placements;
+		placements.reserve(static_cast<std::size_t>(placement_count.value()));
+		for (std::uint64_t placement_index = 0;
+		     placement_index < placement_count.value();
+		     ++placement_index) {
+			auto key = reader.little<std::uint64_t>();
+			auto child_id = reader.id();
+			auto x = reader.floating();
+			auto y = reader.floating();
+			auto width = reader.floating();
+			auto height = reader.floating();
+			auto source_width = reader.floating();
+			auto source_height = reader.floating();
+			auto scroll = reader.floating();
+			if (!key.is_ok() || !child_id.is_ok() || !x.is_ok() || !y.is_ok() ||
+			    !width.is_ok() || !height.is_ok() || !source_width.is_ok() ||
+			    !source_height.is_ok() || !scroll.is_ok() || child_id.value().is_nil() ||
+			    revision.record_for(BlockId{child_id.value()}) == nullptr ||
+			    !owned_blocks.insert(child_id.value()).second) {
+				return Error{ErrorCode::corrupt_data, "dogfood SpatialPlacement 不合法"};
+			}
+			placements.push_back(SpatialPlacement{
+				key.value(),
+				BlockId{child_id.value()},
+				RectD{x.value(), y.value(), width.value(), height.value()},
+				source_width.value(),
+				source_height.value(),
+				scroll.value(),
+			});
+		}
+		auto spatial = SpatialContainer::create(std::move(placements));
+		if (!spatial.is_ok()) {
+			return Error{ErrorCode::corrupt_data, "dogfood SpatialContainer invariant 失敗"};
+		}
+		revision = revision.with_spatial_root(
+			ContainerId{id.value()},
+			std::move(spatial).take()
+		);
 	}
 	if (reader.remaining() != 0 || !revision.validate().ok()) {
 		return Error{ErrorCode::corrupt_data, "dogfood file 有尾端資料或索引不一致"};

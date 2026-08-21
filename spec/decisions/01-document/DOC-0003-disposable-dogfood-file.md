@@ -13,9 +13,9 @@
 
 | 保存 | 不保存 |
 |---|---|
-| 可見 `ParagraphRecord` 的 UTF-8 | ObjectSlot、LeafKey、LocationIndex |
+| 可見 `ParagraphRecord`、兩種 `EmbedRecord` | ObjectSlot、LeafKey、LocationIndex |
 | stable `BlockId`、`ContainerId` | layout／shaping cache 與失效資料 |
-| 每個 FlowContainer 的 Block 順序 | selection、undo／redo、composition overlay |
+| Flow 順序、Spatial placements／比例／scroll | selection、undo／redo、composition overlay |
 | magic、版本與 disposable flag | identity、permission、session、protocol、digest |
 
 P1 dogfood 尚未包含 Ink，所以本格式不保存 `InkStroke` 或 `BrushStyle`，也不得宣稱 Ink 可存檔。
@@ -52,9 +52,10 @@ P1 暫存格式採單一 writer；固定 `.krepis.tmp` 不提供跨 process 鎖�
 
 | 區段 | 欄位 |
 |---|---|
-| Header | 8-byte `KRPDOG01`、`u16 major=1`、`u16 minor=0`、`u32 disposable=1` |
-| Objects | `u64 count`；每筆為 `u32 kind=1`、ObjectId、`u64 byteLength`、UTF-8 bytes |
-| Containers | `u64 count`；每筆為 ContainerId、`u64 blockCount`、依序排列的 BlockId |
+| Header | 8-byte `KRPDOG01`、`u16 major=1`、`u16 minor=1`、`u32 disposable=1` |
+| Objects | `u64 count`；kind 1 是 Paragraph，2 是 FlowRangeEmbed，3 是 SpatialViewportEmbed |
+| Flow | `u64 count`；每筆為 ContainerId、`u64 blockCount`、依序排列的 BlockId |
+| Spatial | `u64 count`；每筆為 ContainerId、placements；placement 保存 key、child、frame、source size、scroll |
 
 Reader 必須精確消耗整個檔案。未知 major/minor 回 `version_mismatch`；magic、flag、截斷、尾端資料、
 nil／重複 ID、未知 kind、超限長度或 Flow 指向不存在／重複 Block 都 fail closed。上限為一千萬物件、
@@ -69,7 +70,8 @@ nil／重複 ID、未知 kind、超限長度或 Flow 指向不存在／重複 Bl
 
 ## 驗證證據
 
-- round-trip 保存 UTF-8、stable IDs 與 Flow 順序。
+- round-trip 保存 UTF-8、stable IDs、Flow 順序、兩種 Embed、Spatial frame／比例／scroll，並由
+  records 重建 reverse-reference index。
 - 對合法檔案的每一個截斷位置逐一驗證 fail closed。
 - 未知版本、尾端垃圾、重複 Flow ownership 都拒絕。
 - 同一路徑連續存 `old`、`new` 後只讀到完整 `new`，且成功後不留下暫存檔。

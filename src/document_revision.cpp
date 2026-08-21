@@ -1,5 +1,7 @@
 #include "krepis/document_revision.hpp"
 
+#include "krepis/embed_record.hpp"
+
 #include <cassert>
 #include <utility>
 
@@ -8,18 +10,20 @@ namespace krepis {
 DocumentRevision::DocumentRevision(SnapshotId snapshot_id,
                                    IntrusivePtr<const IdDirectory> directory,
                                    ObjectStoreSnapshot store, LocationIndex locations,
-                                   std::vector<FlowRootEntry> flow_roots,
-	                               std::vector<SpatialRootEntry> spatial_roots) noexcept
+	                               std::vector<FlowRootEntry> flow_roots,
+	                               std::vector<SpatialRootEntry> spatial_roots,
+	                               IntrusivePtr<const ReferenceIndex> references) noexcept
     : snapshot_id_(snapshot_id),
       directory_(std::move(directory)),
       store_(std::move(store)),
       locations_(std::move(locations)),
       flow_roots_(std::move(flow_roots)),
-	  spatial_roots_(std::move(spatial_roots)) {}
+	  spatial_roots_(std::move(spatial_roots)),
+	  references_(std::move(references)) {}
 
 DocumentRevision DocumentRevision::initial() {
     return DocumentRevision(SnapshotId{0, 0}, IdDirectory::empty(), ObjectStoreSnapshot::empty(),
-                            LocationIndex::empty(), {}, {});
+                            LocationIndex::empty(), {}, {}, ReferenceIndex::empty());
 }
 
 SnapshotId DocumentRevision::next_content_revision() const noexcept {
@@ -63,10 +67,18 @@ IntrusivePtr<const ObjectRecord> DocumentRevision::record_for(BlockId block) con
 DocumentRevision DocumentRevision::with_new_object(
     BlockId block, IntrusivePtr<const ObjectRecord> record) const {
     auto allocated = directory_->allocate(block.raw());
+	auto references = references_;
+	if (const auto* prior = dynamic_cast<const EmbedRecord*>(store_.get(allocated.slot).get())) {
+		references = references->with_removed(prior->source_container(), block);
+	}
+	if (const auto* embed = dynamic_cast<const EmbedRecord*>(record.get())) {
+		references = references->with_added(embed->source_container(), block);
+	}
     auto new_store = store_.with_record(allocated.slot, std::move(record));
 
     return DocumentRevision(next_content_revision(), std::move(allocated.directory),
-                            std::move(new_store), locations_, flow_roots_, spatial_roots_);
+                            std::move(new_store), locations_, flow_roots_, spatial_roots_,
+	                        std::move(references));
 }
 
 DocumentRevision DocumentRevision::with_updated_record(
@@ -74,10 +86,17 @@ DocumentRevision DocumentRevision::with_updated_record(
     const auto slot = resolve(block);
     assert(slot.is_valid() && "修改記錄前必須先配置 slot");
 
+	auto references = references_;
+	if (const auto* prior = dynamic_cast<const EmbedRecord*>(store_.get(slot).get())) {
+		references = references->with_removed(prior->source_container(), block);
+	}
+	if (const auto* embed = dynamic_cast<const EmbedRecord*>(record.get())) {
+		references = references->with_added(embed->source_container(), block);
+	}
     auto new_store = store_.with_record(slot, std::move(record));
 
     return DocumentRevision(next_content_revision(), directory_, std::move(new_store), locations_,
-                            flow_roots_, spatial_roots_);
+                            flow_roots_, spatial_roots_, std::move(references));
 }
 
 Result<DocumentRevision> DocumentRevision::with_updated_records(
@@ -97,7 +116,15 @@ Result<DocumentRevision> DocumentRevision::with_updated_records(
 
 	// 步驟 2：只在全部驗證成功後建立新的 COW store，最後增加一次 revision。
 	auto new_store = store_;
+	auto references = references_;
 	for (const auto& update : updates) {
+		const auto slot = resolve(update.block);
+		if (const auto* prior = dynamic_cast<const EmbedRecord*>(new_store.get(slot).get())) {
+			references = references->with_removed(prior->source_container(), update.block);
+		}
+		if (const auto* embed = dynamic_cast<const EmbedRecord*>(update.record.get())) {
+			references = references->with_added(embed->source_container(), update.block);
+		}
 		new_store = new_store.with_record(resolve(update.block), update.record);
 	}
 
@@ -107,7 +134,8 @@ Result<DocumentRevision> DocumentRevision::with_updated_records(
 		std::move(new_store),
 		locations_,
 		flow_roots_,
-		spatial_roots_
+		spatial_roots_,
+		std::move(references)
 	);
 }
 
@@ -119,9 +147,14 @@ DocumentRevision DocumentRevision::with_deleted_object(BlockId block) const {
     // 因為 slot 在同一世代內不得重用（D10）。
     auto new_store = store_.with_tombstone(slot);
     auto new_locations = locations_.clear(slot);
+	auto references = references_;
+	if (const auto* prior = dynamic_cast<const EmbedRecord*>(store_.get(slot).get())) {
+		references = references->with_removed(prior->source_container(), block);
+	}
 
     return DocumentRevision(next_content_revision(), directory_, std::move(new_store),
-                            std::move(new_locations), flow_roots_, spatial_roots_);
+                            std::move(new_locations), flow_roots_, spatial_roots_,
+	                        std::move(references));
 }
 
 DocumentRevision DocumentRevision::with_flow_root(ContainerId container,
@@ -165,7 +198,8 @@ DocumentRevision DocumentRevision::with_flow_root(ContainerId container,
     }
 
     return DocumentRevision(next_content_revision(), std::move(new_directory), store_,
-                            std::move(new_locations), std::move(new_roots), spatial_roots_);
+                            std::move(new_locations), std::move(new_roots), spatial_roots_,
+	                        references_);
 }
 
 DocumentRevision DocumentRevision::with_spatial_root(
@@ -208,8 +242,98 @@ DocumentRevision DocumentRevision::with_spatial_root(
 		store_,
 		std::move(new_locations),
 		flow_roots_,
-		std::move(roots)
+		std::move(roots),
+		references_
 	);
+}
+
+Result<DocumentRevision> DocumentRevision::with_flow_block_removal(
+	ContainerId container,
+	BlockId block,
+	bool delete_record
+) const {
+	const auto* prior = flow_root(container);
+	if (prior == nullptr) {
+		return Error{ErrorCode::not_found, "Flow removal 的 Container 不存在"};
+	}
+	const auto slot = resolve(block);
+	if (!slot.is_valid()) return Error{ErrorCode::not_found, "Flow removal 的 Block 不存在"};
+	const auto location = locations_.lookup(slot);
+	if (!location.is_flow() || location.owner != container) {
+		return Error{ErrorCode::invalid_state, "Block 不直接屬於指定 FlowContainer"};
+	}
+	const auto rank = prior->find_block_in_leaf(location.flow.leaf_key, block);
+	if (!rank.has_value()) {
+		return Error{ErrorCode::invalid_state, "Flow locator 無法解析到 Block"};
+	}
+
+	const auto next_content_revision = snapshot_id_.content_revision + 1;
+	auto new_store = store_;
+	for (const auto embed_block : references_->referencing(container)) {
+		auto record = store_.get(resolve(embed_block));
+		const auto* embed = dynamic_cast<const EmbedRecord*>(record.get());
+		if (embed == nullptr) {
+			return Error{ErrorCode::invalid_state, "ReferenceIndex 指向非 EmbedRecord"};
+		}
+		const auto* target = std::get_if<FlowRangeTarget>(&embed->target());
+		if (target == nullptr ||
+		    (target->anchor_a != block && target->anchor_b != block)) {
+			continue;
+		}
+		auto repaired = repair_flow_range_after_removal(*target, *prior, block);
+		if (!repaired.is_ok()) return repaired.error();
+		if (repaired.value() == *target) continue;
+		auto replacement = EmbedRecord::create(
+			next_content_revision,
+			repaired.value()
+		);
+		if (!replacement.is_ok()) return replacement.error();
+		new_store = new_store.with_record(resolve(embed_block), std::move(replacement).take());
+	}
+
+	auto references = references_;
+	if (delete_record) {
+		if (const auto* removed_embed = dynamic_cast<const EmbedRecord*>(store_.get(slot).get())) {
+			references = references->with_removed(removed_embed->source_container(), block);
+		}
+		new_store = new_store.with_tombstone(slot);
+	}
+	auto new_locations = locations_;
+	for (std::size_t i = 0; i < prior->block_count(); ++i) {
+		const auto prior_slot = resolve(prior->at(i));
+		const auto prior_location = new_locations.lookup(prior_slot);
+		if (prior_location.is_flow() && prior_location.owner == container) {
+			new_locations = new_locations.clear(prior_slot);
+		}
+	}
+	auto next_sequence = prior->remove(*rank);
+	for (std::size_t i = 0; i < next_sequence.block_count(); ++i) {
+		const auto child_slot = resolve(next_sequence.at(i));
+		new_locations = new_locations.set(
+			child_slot,
+			make_flow_location(container, next_sequence.leaf_key_at(i))
+		);
+	}
+	auto roots = flow_roots_;
+	for (auto& root : roots) {
+		if (root.first == container) {
+			root.second = std::move(next_sequence);
+			break;
+		}
+	}
+	DocumentRevision result(
+		SnapshotId{next_content_revision, snapshot_id_.storage_generation},
+		directory_,
+		std::move(new_store),
+		std::move(new_locations),
+		std::move(roots),
+		spatial_roots_,
+		std::move(references)
+	);
+	if (!result.validate().ok()) {
+		return Error{ErrorCode::invalid_state, "Flow removal 產生不一致 revision"};
+	}
+	return result;
 }
 
 Result<DocumentRevision> DocumentRevision::with_flow_insert(
@@ -248,13 +372,22 @@ Result<DocumentRevision> DocumentRevision::with_flow_insert(
         snapshot_id_.storage_generation + (edit.diagnostics().global_rebuild ? 1u : 0u),
     };
     return DocumentRevision(next, std::move(new_directory), store_,
-                            std::move(new_locations), std::move(new_roots), spatial_roots_);
+                            std::move(new_locations), std::move(new_roots), spatial_roots_,
+	                        references_);
 }
 
 DocumentRevision DocumentRevision::with_storage_rebuild() const {
     // 只遞增 storage_generation：內容不變，但持有內部 handle 的工作必須失效（D18）。
     const SnapshotId rebuilt{snapshot_id_.content_revision, snapshot_id_.storage_generation + 1};
-    return DocumentRevision(rebuilt, directory_, store_, locations_, flow_roots_, spatial_roots_);
+    return DocumentRevision(
+		rebuilt,
+		directory_,
+		store_,
+		locations_,
+		flow_roots_,
+		spatial_roots_,
+		references_
+	);
 }
 
 RevisionValidation DocumentRevision::validate() const {
