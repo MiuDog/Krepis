@@ -75,6 +75,8 @@ public:
     [[nodiscard]] const FlowSequence* flow_root(ContainerId container) const;
 
     [[nodiscard]] std::size_t container_count() const noexcept { return flow_roots_.size(); }
+	// 前置條件：index < container_count()。只供序列化與診斷列舉，不具有順序語意。
+	[[nodiscard]] ContainerId container_id_at(std::size_t index) const;
 
     // 解析 BlockId 為 slot。找不到回傳 invalid_object_slot。
     [[nodiscard]] ObjectSlot resolve(BlockId block) const;

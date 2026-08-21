@@ -27,6 +27,8 @@ enum class ErrorCode : std::uint32_t {
     version_mismatch = 6,  // 核心與呼叫端的契約版本不符
     revision_conflict = 7, // Transaction 的 base content revision 已過期
     missing_glyph = 8,     // 所有候選字型都缺少指定 grapheme
+    io_failure = 9,        // 檔案或作業系統 I/O 失敗
+    corrupt_data = 10,     // 外部資料截斷、毀損或違反格式 invariant
 };
 
 // 一次可恢復失敗的完整描述。

@@ -33,6 +33,11 @@ const FlowSequence* DocumentRevision::flow_root(ContainerId container) const {
     return nullptr;
 }
 
+ContainerId DocumentRevision::container_id_at(std::size_t index) const {
+	assert(index < flow_roots_.size());
+	return flow_roots_[index].first;
+}
+
 ObjectSlot DocumentRevision::resolve(BlockId block) const {
     return directory_->resolve(block.raw());
 }

@@ -14,7 +14,8 @@ Notist 一旦能實際使用 Flow 文字與 IME，立即加入可丟棄的本機
 | 1. `LeafKey` 局部 relabel | ✅ 完成 | `f545fee`；100k 三模式 gate、原子 locator、stale root、舊 snapshot 與 benchmark |
 | 2. 正式文字 layout | ✅ 完成 | 19/19 Debug；Release p99 0.050 ms；CI `32495083712` 四個 job 全綠 |
 | 3. Flow 編輯、IME、selection、undo | **核心完成；待 C ABI 後接 Notist** | 22/22 Debug tests；anchor、overlay、typed global undo 已完成 |
-| 4–7 | 未開始 | 依本計畫順序執行 |
+| 4. Q1=A 暫時持久化 | **核心完成；待 Notist reopen smoke** | DOC-0003；round-trip、全截斷點、版本與原子替換已驗證 |
+| 5–7 | 未開始 | 依本計畫順序執行 |
 
 遠端證據：[`CI run 32491214397`](https://github.com/MiuDog/Krepis/actions/runs/32491214397)、
 [`CI run 32495083712`](https://github.com/MiuDog/Krepis/actions/runs/32495083712)、

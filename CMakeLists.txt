@@ -35,6 +35,7 @@ add_library(krepis::krepis ALIAS krepis)
 target_sources(krepis PRIVATE
     src/arena.cpp
     src/document_revision.cpp
+    src/dogfood_file.cpp
     src/editing.cpp
     src/editing_session.cpp
     src/flow_layout_index.cpp

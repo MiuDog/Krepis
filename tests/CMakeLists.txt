@@ -39,6 +39,9 @@ add_test(NAME krepis.ink_types COMMAND krepis_ink_types_test)
 krepis_add_test(krepis_document_revision_test document_revision_test.cpp)
 add_test(NAME krepis.document_revision COMMAND krepis_document_revision_test)
 
+krepis_add_test(krepis_dogfood_file_test dogfood_file_test.cpp)
+add_test(NAME krepis.dogfood_file COMMAND krepis_dogfood_file_test)
+
 krepis_add_test(krepis_location_index_test location_index_test.cpp)
 add_test(NAME krepis.location_index COMMAND krepis_location_index_test)
 
