@@ -54,4 +54,3 @@ struct TextAnalysis {
 );
 
 }  // namespace krepis
-

@@ -176,4 +176,3 @@ int main() {
 	test_bidi_numbers_and_script_runs();
 	return krepis_test::report("krepis.text_analysis");
 }
-
